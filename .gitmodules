@@ -1,0 +1,3 @@
+[submodule "deps/nanoqsp"]
+	path = deps/nanoqsp
+	url = git@github.com:sleepybishop/nanoqsp.git

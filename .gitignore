@@ -1,0 +1,38 @@
+# ignore large downloaded catalog data directories
+data/hipparcos/
+data/yale-bright-star/
+data/hyg/
+data/tycho-2/
+data/tetra3_git/
+deps/ceres-solver/
+
+# ignore generated databases, images, and temp files
+data/*.json
+data/*.bin
+data/*.png
+data/*.pgm
+data/*.npz
+
+# python build and cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# ignore local roadmap and evaluation files
+TODO.md
+*evaluation.md
+*.o
+starfix_prototype
+starfix_cli
+t/test_*
+bench*
+scratch_*
+
+
+output.json
+trail_preprocessor
+*.png
+*.pgm
+
