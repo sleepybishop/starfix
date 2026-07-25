@@ -20,7 +20,7 @@ static starfix_arena_t arena;
 int main() {
     printf("--- Running Position Solver Comprehensive Tests ---\n");
 
-    double R_dummy[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    const double R_dummy[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
     double gha_dummy = 120.0;
     double solved_lat = 0.0, solved_lon = 0.0;
 
@@ -79,9 +79,9 @@ int main() {
     zenith_cam.z =
         R[2][0] * true_zenith_cel[0] + R[2][1] * true_zenith_cel[1] + R[2][2] * true_zenith_cel[2];
 
-    int status =
-        (RESET_ARENA(), starfix_solve_position(1, &zenith_cam, R, &gha_aries, ap_lat, ap_lon,
-                                               &solved_lat, &solved_lon, &arena, NULL));
+    int status = (RESET_ARENA(),
+                  starfix_solve_position(1, &zenith_cam, (const double (*)[3])R, &gha_aries, ap_lat,
+                                         ap_lon, &solved_lat, &solved_lon, &arena, NULL));
 
     if (status >= 0) {
         double error_lat = solved_lat - true_lat;

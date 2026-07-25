@@ -1,7 +1,7 @@
 # starfix: makefile containing code formatting, compilation, and testing targets
 
 CC = gcc
-CFLAGS = -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wfloat-equal -Werror -O2
+CFLAGS = -std=c99 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wfloat-equal -Werror -O2
 DEPS_CFLAGS = -Wall -O2
 LDFLAGS = -lm
 

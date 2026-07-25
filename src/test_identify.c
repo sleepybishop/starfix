@@ -10,6 +10,10 @@ static starfix_arena_t arena;
 #define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
 #include <string.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include "starfix_attitude.h"
 #include "starfix_identify.h"
 

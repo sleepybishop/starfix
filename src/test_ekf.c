@@ -5,6 +5,10 @@
 #include "starfix_ekf.h"
 #include "starfix_status.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /* test runner to verify the C EKF implementation under multiple conditions */
 
 int main() {

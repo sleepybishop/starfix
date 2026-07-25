@@ -1,8 +1,20 @@
 #ifndef STARFIX_ARENA_H
 #define STARFIX_ARENA_H
 
+#ifndef _Alignof
 #ifdef __cplusplus
 #define _Alignof alignof
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+/* C11 supports _Alignof */
+#else
+#define _Alignof(type)   \
+    offsetof(            \
+        struct {         \
+            char c;      \
+            type member; \
+        },               \
+        member)
+#endif
 #endif
 
 #include <stddef.h>

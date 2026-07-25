@@ -500,7 +500,7 @@ static int do_estimate_pose() {
     printf("Roll            |       %10.6f |     0.000000\n", roll);
     printf("-------------------------------------------------------\n");
 
-    write_attitude_json("data/attitude.json", ra, dec, roll, R);
+    write_attitude_json("data/attitude.json", ra, dec, roll, (const double (*)[3])R);
 
     free(catalog);
     free(hash_table);
@@ -567,8 +567,8 @@ static int do_solve_fix() {
     starfix_telemetry_t telem = {0};
     RESET_ARENA();
     starfix_status_t status =
-        starfix_solve_position(50, zenith_cam_meas, R, gha_aries_arr, ap_lat, ap_lon, &solved_lat,
-                               &solved_lon, &arena, &telem);
+        starfix_solve_position(50, zenith_cam_meas, (const double (*)[3])R, gha_aries_arr, ap_lat,
+                               ap_lon, &solved_lat, &solved_lon, &arena, &telem);
 
     if (status != STARFIX_SUCCESS) {
         printf("Position fix solver failed.\n");
