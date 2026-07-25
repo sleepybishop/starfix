@@ -38,7 +38,7 @@ sub read_json {
 {
     ok(-f $db_path, "Database file exists");
     my $sz = -s $db_path;
-    ok($sz > 10 * 1024 * 1024, "Database file size is larger than 10MB ($sz bytes)");
+    ok($sz > 1 * 1024 * 1024 && $sz < 10 * 1024 * 1024, "Database file size is minimized and fits in 10MB arena ($sz bytes)");
     
     open(my $fh, '<:raw', $db_path) or die "Cannot open database";
     my $buf;

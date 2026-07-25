@@ -129,10 +129,10 @@ sub main {
             }
         }
         
-        # sort neighbors by distance, keep 15 closest to prevent explosion
+        # sort neighbors by distance, keep 10 closest to prevent hash table bloat
         @neighbors = sort { $a->{dist} <=> $b->{dist} } @neighbors;
-        if (scalar(@neighbors) > 15) {
-            splice(@neighbors, 15);
+        if (scalar(@neighbors) > 10) {
+            splice(@neighbors, 10);
         }
         
         # generate combinations
