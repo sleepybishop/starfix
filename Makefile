@@ -5,7 +5,7 @@ CFLAGS = -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wfloat-equal -Werror -O
 DEPS_CFLAGS = -Wall -O2
 LDFLAGS = -lm
 
-.PHONY: all indent check clean demo lint
+.PHONY: all indent check clean demo lint db
 
 all: t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify starfix_cli
 
@@ -50,6 +50,9 @@ demo: starfix_cli
 	perl scripts/simulate_camera.pl
 	./starfix_cli --pipeline
 	perl scripts/visualize.pl
+
+db:
+	perl scripts/generate_database.pl
 
 clean:
 	rm -f t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify starfix_cli *.o
