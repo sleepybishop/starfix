@@ -1,9 +1,9 @@
 #include <math.h>
-#include "starfix_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "starfix_arena.h"
+#include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;
@@ -145,8 +145,9 @@ int main() {
     w_ransac[5].z = 0.0;
 
     /* run RANSAC attitude solver */
-    starfix_status_t ransac_status = (RESET_ARENA(), starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2,
-                                                                       &q_est, R_est, &arena, &telem));
+    starfix_status_t ransac_status =
+        (RESET_ARENA(), starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, &q_est, R_est,
+                                                      &arena, &telem));
     int ransac_inliers = (int)telem.ransac_inliers;
 
     if (ransac_status == STARFIX_SUCCESS && ransac_inliers == 4) {
@@ -198,6 +199,26 @@ int main() {
     } else {
         printf("FAILED (status=%d, x=%f (exp=%f), z=%f (exp=%f))\n", ref_status, w_refraction.x,
                expected_x, w_refraction.z, expected_z);
+    }
+
+    /* 6. Stellar Aberration Correction Check */
+    printf("Test 6: Stellar Aberration Correction... ");
+    starfix_vector3_t v_aberration[1] = {{1.0, 0.0, 0.0}};
+    double v_obs_km_s[3] = {0.0, 30.0, 0.0}; /* ~30 km/s Earth velocity */
+
+    int ab_status = starfix_correct_aberration(1, v_aberration, v_obs_km_s);
+    double c_kms = 299792.458;
+    double beta_y = 30.0 / c_kms;
+    double norm_ab = sqrt(1.0 + beta_y * beta_y);
+    double expected_ab_x = 1.0 / norm_ab;
+    double expected_ab_y = beta_y / norm_ab;
+
+    if (ab_status == 0 && fabs(v_aberration[0].x - expected_ab_x) < 1e-7 &&
+        fabs(v_aberration[0].y - expected_ab_y) < 1e-7) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (status=%d, x=%f (exp=%f), y=%f (exp=%f))\n", ab_status, v_aberration[0].x,
+               expected_ab_x, v_aberration[0].y, expected_ab_y);
     }
 
     return 0;

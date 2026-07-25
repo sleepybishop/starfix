@@ -2,8 +2,8 @@
 #define STARFIX_ATTITUDE_H
 
 #include "starfix_arena.h"
-#include "starfix_status.h"
 #include "starfix_solver.h"
+#include "starfix_status.h"
 
 /* starfix_attitude: C API for attitude determination. solves Wahba's problem
    using Davenport's Q-method (eigenvalue decomposition of 4x4 matrix K)
@@ -20,8 +20,9 @@ typedef struct {
    - q_est: output optimal quaternion
    - R_est: output optimal 3x3 rotation matrix (projects catalog to camera)
    - returns: 0 on success, negative value on error */
-starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w, const starfix_vector3_t* v,
-                           starfix_quaternion_t* q_est, double R_est[3][3]);
+starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
+                                        const starfix_vector3_t* v, starfix_quaternion_t* q_est,
+                                        double R_est[3][3]);
 
 /* solves Wahba's problem using RANSAC to reject outliers:
    - num_stars: number of paired star vectors
@@ -32,9 +33,9 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
    - R_est: output optimal 3x3 rotation matrix
    - returns: number of inliers on success, negative value on error */
 starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
-                                  const starfix_vector3_t* v, double threshold_deg,
-                                  starfix_quaternion_t* q_est, double R_est[3][3],
-                                  starfix_arena_t* arena, starfix_telemetry_t* telem);
+                                               const starfix_vector3_t* v, double threshold_deg,
+                                               starfix_quaternion_t* q_est, double R_est[3][3],
+                                               starfix_arena_t* arena, starfix_telemetry_t* telem);
 
 /* applies atmospheric refraction correction to a set of observed camera vectors:
    - num_stars: number of stars
@@ -45,5 +46,12 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
    - returns: 0 on success, negative value on error */
 int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfix_vector3_t* z_cam,
                                double temp_c, double press_hpa);
+
+/* applies stellar aberration correction to a set of catalog vectors:
+   - num_stars: number of stars
+   - v: celestial catalog unit vectors (modified in-place)
+   - v_obs_km_s: observer velocity in km/s (ICRS frame)
+   - returns: 0 on success, negative value on error */
+int starfix_correct_aberration(int num_stars, starfix_vector3_t* v, const double v_obs_km_s[3]);
 
 #endif /* STARFIX_ATTITUDE_H */

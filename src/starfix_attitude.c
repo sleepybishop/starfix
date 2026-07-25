@@ -1,10 +1,11 @@
 #include "starfix_attitude.h"
-#include "starfix_status.h"
 
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include "starfix_status.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -122,8 +123,9 @@ static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
     return STARFIX_ERR_MEMORY; /* failed to converge */
 }
 
-starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w, const starfix_vector3_t* v,
-                           starfix_quaternion_t* q_est, double R_est[3][3]) {
+starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
+                                        const starfix_vector3_t* v, starfix_quaternion_t* q_est,
+                                        double R_est[3][3]) {
     int i, j, k;
 
     if (num_stars < 2) {
@@ -250,9 +252,9 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
 }
 
 starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
-                                  const starfix_vector3_t* v, double threshold_deg,
-                                  starfix_quaternion_t* q_est, double R_est[3][3],
-                                  starfix_arena_t* arena, starfix_telemetry_t* telem) {
+                                               const starfix_vector3_t* v, double threshold_deg,
+                                               starfix_quaternion_t* q_est, double R_est[3][3],
+                                               starfix_arena_t* arena, starfix_telemetry_t* telem) {
     if (num_stars < 2) {
         return STARFIX_ERR_INVALID_PARAM;
     }
@@ -356,11 +358,17 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
         if (res < 0) {
             return res;
         }
-        if (telem) { telem->ransac_inliers = (uint32_t)num_stars; telem->ransac_inlier_ratio = 1.0; }
-    return STARFIX_SUCCESS;
+        if (telem) {
+            telem->ransac_inliers = (uint32_t)num_stars;
+            telem->ransac_inlier_ratio = 1.0;
+        }
+        return STARFIX_SUCCESS;
     }
 
-    if (telem) { telem->ransac_inliers = (uint32_t)best_inlier_count; telem->ransac_inlier_ratio = (double)best_inlier_count / num_stars; }
+    if (telem) {
+        telem->ransac_inliers = (uint32_t)best_inlier_count;
+        telem->ransac_inlier_ratio = (double)best_inlier_count / num_stars;
+    }
     return STARFIX_SUCCESS;
 }
 
@@ -418,6 +426,36 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
                     w[i].z /= w_norm;
                 }
             }
+        }
+    }
+
+    return STARFIX_SUCCESS;
+}
+
+int starfix_correct_aberration(int num_stars, starfix_vector3_t* v, const double v_obs_km_s[3]) {
+    if (v == NULL || v_obs_km_s == NULL || num_stars <= 0) {
+        return STARFIX_ERR_NULL_POINTER;
+    }
+
+    const double c_kms = 299792.458;
+    double beta_x = v_obs_km_s[0] / c_kms;
+    double beta_y = v_obs_km_s[1] / c_kms;
+    double beta_z = v_obs_km_s[2] / c_kms;
+
+    int i;
+    for (i = 0; i < num_stars; i++) {
+        double s_dot_b = v[i].x * beta_x + v[i].y * beta_y + v[i].z * beta_z;
+
+        /* First order stellar aberration correction: s' = s + beta - s(s . beta) */
+        double sp_x = v[i].x + beta_x - v[i].x * s_dot_b;
+        double sp_y = v[i].y + beta_y - v[i].y * s_dot_b;
+        double sp_z = v[i].z + beta_z - v[i].z * s_dot_b;
+
+        double norm = sqrt(sp_x * sp_x + sp_y * sp_y + sp_z * sp_z);
+        if (norm > 1e-12) {
+            v[i].x = sp_x / norm;
+            v[i].y = sp_y / norm;
+            v[i].z = sp_z / norm;
         }
     }
 
