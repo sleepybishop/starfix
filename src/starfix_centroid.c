@@ -1,13 +1,13 @@
 #include "starfix_centroid.h"
-#include "starfix_status.h"
 
 #include <stdlib.h>
 #include <string.h>
 
+#include "starfix_status.h"
+
 #define MAX_BLOB_PIXELS 1000
 #define MAX_STAR_PIXELS 300
 #define MAX_BFS_ITERS 1500
-
 
 /* helper to sort centroids in place (flux descending) */
 static int compare_centroids(const void* a, const void* b) {
@@ -23,8 +23,8 @@ static void sort_centroids(starfix_centroid_t* arr, int len) {
 }
 
 starfix_status_t starfix_find_centroids(const unsigned char* image, int width, int height,
-                           unsigned char threshold, int max_centroids,
-                           starfix_centroid_t* centroids, starfix_telemetry_t* telem) {
+                                        unsigned char threshold, int max_centroids,
+                                        starfix_centroid_t* centroids, starfix_telemetry_t* telem) {
     if (image == NULL || centroids == NULL) {
         return STARFIX_ERR_CENTROID_BUFFER_FULL;
     }
@@ -62,6 +62,8 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
                 double sum_u = 0.0;
                 double sum_v = 0.0;
                 double peak = 0.0;
+                int peak_x = x;
+                int peak_y = y;
 
                 int bfs_iters = 0;
                 /* run bfs flood fill */
@@ -78,6 +80,8 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
                     sum_v += val * cy;
                     if (val > peak) {
                         peak = val;
+                        peak_x = cx;
+                        peak_y = cy;
                     }
 
                     /* check 8-connected neighbors */
@@ -105,8 +109,40 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
                 /* validate star blob size */
                 if (sum_intensity > 0.0 && tail <= MAX_STAR_PIXELS) {
                     if (count < max_centroids) {
-                        centroids[count].u = sum_u / sum_intensity;
-                        centroids[count].v = sum_v / sum_intensity;
+                        double u_com = sum_u / sum_intensity;
+                        double v_com = sum_v / sum_intensity;
+
+                        if (peak_x > 0 && peak_x < width - 1 && peak_y > 0 && peak_y < height - 1) {
+                            double i_c = (double)image[peak_y * width + peak_x];
+                            double i_left = (double)image[peak_y * width + (peak_x - 1)];
+                            double i_right = (double)image[peak_y * width + (peak_x + 1)];
+                            double i_top = (double)image[(peak_y - 1) * width + peak_x];
+                            double i_bottom = (double)image[(peak_y + 1) * width + peak_x];
+
+                            double denom_x = i_left - 2.0 * i_c + i_right;
+                            double denom_y = i_top - 2.0 * i_c + i_bottom;
+
+                            if (fabs(denom_x) > 1e-5 && fabs(denom_y) > 1e-5) {
+                                double sub_dx = 0.5 * (i_left - i_right) / denom_x;
+                                double sub_dy = 0.5 * (i_top - i_bottom) / denom_y;
+                                if (fabs(sub_dx) <= 0.5 && fabs(sub_dy) <= 0.5) {
+                                    centroids[count].u =
+                                        0.5 * u_com + 0.5 * ((double)peak_x + sub_dx);
+                                    centroids[count].v =
+                                        0.5 * v_com + 0.5 * ((double)peak_y + sub_dy);
+                                } else {
+                                    centroids[count].u = u_com;
+                                    centroids[count].v = v_com;
+                                }
+                            } else {
+                                centroids[count].u = u_com;
+                                centroids[count].v = v_com;
+                            }
+                        } else {
+                            centroids[count].u = u_com;
+                            centroids[count].v = v_com;
+                        }
+
                         centroids[count].peak = peak;
                         centroids[count].flux = sum_intensity;
                         centroids[count].num_pixels = tail;
@@ -120,7 +156,9 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
     /* sort detected centroids by integrated flux (brightest first) */
     sort_centroids(centroids, count);
 
-    if (telem) { telem->num_stars_detected = (uint32_t)count; }
+    if (telem) {
+        telem->num_stars_detected = (uint32_t)count;
+    }
     return STARFIX_SUCCESS;
 }
 
