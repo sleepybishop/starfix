@@ -63,50 +63,43 @@ sub main {
     pop @dirs; # pop scripts dir
     $base_dir = File::Spec->catdir(@dirs);
     
-    my $db_path = File::Spec->catfile($base_dir, "data", "starfix_db.json");
+    my $db_path = File::Spec->catfile($base_dir, "data", "starfix_db.bin");
     my $centroids_path = File::Spec->catfile($base_dir, "data", "mock_centroids.json");
     my $image_path = File::Spec->catfile($base_dir, "data", "mock_image.pgm");
     
     print "Loading database from $db_path...\n";
-    open(my $fh, '<', $db_path) or die "Cannot open database: $!";
+    open(my $fh, '<:raw', $db_path) or die "Cannot open database: $!";
+    
+    my $magic;
+    read($fh, $magic, 4) == 4 or die "Short read on magic prefix";
+    die "Invalid database magic prefix: $magic" unless $magic eq "SFIX";
+    
+    my $header_buf;
+    read($fh, $header_buf, 12) == 12 or die "Short read on header";
+    my ($num_stars, $num_entries, $bin_factor) = unpack("V V V", $header_buf);
     
     my @stars;
-    my $in_stars = 0;
-    my $curr_star = {};
-    while (my $line = <$fh>) {
-        if ($line =~ /"stars"\s*:\s*\[/) {
-            $in_stars = 1;
-            next;
-        }
-        if ($in_stars) {
-            if ($line =~ /^\s*\]/) {
-                last;
-            }
-            if ($line =~ /^\s*\{/) {
-                $curr_star = {};
-            }
-            elsif ($line =~ /^\s*\}/) {
-                push @stars, $curr_star;
-            }
-            elsif ($line =~ /"id"\s*:\s*(\d+)/) {
-                $curr_star->{id} = $1;
-            }
-            elsif ($line =~ /"hip"\s*:\s*(\d+)/) {
-                $curr_star->{hip} = $1;
-            }
-            elsif ($line =~ /"name"\s*:\s*"([^"]+)"/) {
-                $curr_star->{name} = $1;
-            }
-            elsif ($line =~ /"ra"\s*:\s*([\d\.\-eE]+)/) {
-                $curr_star->{ra} = $1;
-            }
-            elsif ($line =~ /"dec"\s*:\s*([\d\.\-eE]+)/) {
-                $curr_star->{dec} = $1;
-            }
-            elsif ($line =~ /"mag"\s*:\s*([\d\.\-eE]+)/) {
-                $curr_star->{mag} = $1;
-            }
-        }
+    my $catalog_buf;
+    my $catalog_bytes = $num_stars * 12;
+    read($fh, $catalog_buf, $catalog_bytes) == $catalog_bytes or die "Short read on star catalog";
+    
+    my $PI = 3.1415926535897932;
+    for (my $i = 0; $i < $num_stars; $i++) {
+        my $star_entry = substr($catalog_buf, $i * 12, 12);
+        my ($hip, $ra_q, $dec_q, $mag_q, $p1, $p2, $p3, $p4) = unpack("V v v C C C C", $star_entry);
+        
+        my $ra = $ra_q * (2.0 * $PI) / 65535.0;
+        my $dec = $dec_q * $PI / 65535.0 - $PI / 2.0;
+        my $mag = $mag_q * 10.0 / 255.0 - 2.0;
+        
+        push @stars, {
+            id   => $i,
+            hip  => $hip,
+            name => "Unknown",
+            ra   => $ra,
+            dec  => $dec,
+            mag  => $mag
+        };
     }
     close($fh);
     

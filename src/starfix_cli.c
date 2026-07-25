@@ -16,9 +16,9 @@
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;
 
-#define RESET_ARENA()                                              \
-    do {                                                           \
-        arena.beg = mempool;                           \
+#define RESET_ARENA()                          \
+    do {                                       \
+        arena.beg = mempool;                   \
         arena.end = mempool + sizeof(mempool); \
     } while (0)
 

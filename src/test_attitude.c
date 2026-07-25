@@ -7,8 +7,7 @@
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;
-#define RESET_ARENA() \
-    (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
+#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
 
 #include "starfix_attitude.h"
 
@@ -146,8 +145,8 @@ int main() {
 
     /* run RANSAC attitude solver */
     starfix_status_t ransac_status =
-        (RESET_ARENA(), starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, &q_est, R_est,
-                                                      &arena, &telem));
+        (RESET_ARENA(),
+         starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, &q_est, R_est, &arena, &telem));
     int ransac_inliers = (int)telem.ransac_inliers;
 
     if (ransac_status == STARFIX_SUCCESS && ransac_inliers == 4) {

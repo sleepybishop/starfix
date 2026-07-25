@@ -7,8 +7,7 @@
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;
-#define RESET_ARENA() \
-    (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
+#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
 
 #include "starfix_graph.h"
 
