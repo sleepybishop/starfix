@@ -1,5 +1,4 @@
 #include "starfix_graph.h"
-#include "starfix_status.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -7,6 +6,7 @@
 #include <string.h>
 
 #include "../deps/nanoqsp/nanoqsp.h"
+#include "starfix_status.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -15,10 +15,12 @@
 /* helper to convert degrees to radians */
 static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 
-starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec, double initial_lat,
-                        double initial_lon, const starfix_odometry_t* odom, int num_fixes,
-                        const starfix_fix_t* fixes, starfix_pose_t* poses, double* est_scale,
-                        double* est_bias, starfix_arena_t* arena, starfix_telemetry_t* telem) {
+starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec,
+                                     double initial_lat, double initial_lon,
+                                     const starfix_odometry_t* odom, int num_fixes,
+                                     const starfix_fix_t* fixes, starfix_pose_t* poses,
+                                     double* est_scale, double* est_bias, starfix_arena_t* arena,
+                                     starfix_telemetry_t* telem) {
     int i, j, k, iter;
 
     if (num_nodes <= 0 || steps_per_node <= 0 || dt_sec <= 0.0 || odom == NULL || poses == NULL ||
@@ -321,6 +323,8 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
     *est_scale = X[N - 2];
     *est_bias = X[N - 1];
 
-    if (telem) { telem->solver_iterations = (uint32_t)(converged ? (iter + 1) : max_iters); }
+    if (telem) {
+        telem->solver_iterations = (uint32_t)(converged ? (iter + 1) : max_iters);
+    }
     return STARFIX_SUCCESS;
 }

@@ -22,9 +22,10 @@ starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double
 
 /* propagate state using dead reckoning speed and heading */
 starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, double heading_deg,
-                         double dt_sec);
+                                     double dt_sec);
 
 /* correct state using celestial lat/lon fix */
-starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat, double celestial_lon, starfix_telemetry_t* telem);
+starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat,
+                                     double celestial_lon, starfix_telemetry_t* telem);
 
 #endif /* STARFIX_EKF_H */

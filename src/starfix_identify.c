@@ -1,11 +1,12 @@
 #include "starfix_identify.h"
-#include "starfix_status.h"
 
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "starfix_status.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -101,7 +102,6 @@ static int find_first_hash_entry(uint32_t key, const starfix_hash_entry_t* entri
 static void sort_angles(double* angles, int* indices, int n) {
     int i, j;
 
-
     for (i = 0; i < n - 1; i++) {
         for (j = 0; j < n - i - 1; j++) {
             if (angles[j] > angles[j + 1]) {
@@ -116,15 +116,15 @@ static void sort_angles(double* angles, int* indices, int n) {
     }
 }
 
-starfix_status_t starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroids, double width,
-                           double height, double fov_deg, uint32_t num_stars,
-                           const starfix_catalog_star_t* catalog_stars, uint32_t num_entries,
-                           const starfix_hash_entry_t* hash_entries, uint32_t bin_factor,
-                           int max_matches, starfix_match_t* matches, starfix_arena_t* arena, starfix_telemetry_t* telem) {
+starfix_status_t starfix_identify_stars(
+    int num_centroids, const starfix_centroid_t* centroids, double width, double height,
+    double fov_deg, uint32_t num_stars, const starfix_catalog_star_t* catalog_stars,
+    uint32_t num_entries, const starfix_hash_entry_t* hash_entries, uint32_t bin_factor,
+    int max_matches, starfix_match_t* matches, starfix_arena_t* arena, starfix_telemetry_t* telem,
+    const double (*attitude_hint)[3]) {
     int i, j;
 
-
-    if (num_centroids < 4 || centroids == NULL || catalog_stars == NULL || hash_entries == NULL ||
+    if (num_centroids < 3 || centroids == NULL || catalog_stars == NULL || hash_entries == NULL ||
         matches == NULL || max_matches <= 0) {
         return STARFIX_ERR_NULL_POINTER;
     }
@@ -132,17 +132,76 @@ starfix_status_t starfix_identify_stars(int num_centroids, const starfix_centroi
     double fov_rad = fov_deg * M_PI / 180.0;
     double focal_length = width / (2.0 * tan(fov_rad / 2.0));
 
-    /* 1. select up to 8 brightest centroids and convert to camera unit vectors */
-    int n_test = (num_centroids < 8) ? num_centroids : 8;
-    double cam_vecs[8][3];
-    for (i = 0; i < n_test; i++) {
+    /* convert up to 20 centroids for tracking mode */
+    int max_track_centroids = (num_centroids < 20) ? num_centroids : 20;
+    double all_cam_vecs[20][3];
+    for (i = 0; i < max_track_centroids; i++) {
         double cx = (centroids[i].u - width / 2.0) / focal_length;
         double cy = -(centroids[i].v - height / 2.0) / focal_length;
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
-        cam_vecs[i][0] = cx / norm;
-        cam_vecs[i][1] = cy / norm;
-        cam_vecs[i][2] = cz / norm;
+        all_cam_vecs[i][0] = cx / norm;
+        all_cam_vecs[i][1] = cy / norm;
+        all_cam_vecs[i][2] = cz / norm;
+    }
+
+    if (attitude_hint != NULL) {
+        /* TRACKING MODE */
+        int num_matches = 0;
+        double match_tol_rad = 0.5 * M_PI / 180.0;
+        double cos_match_tol = cos(match_tol_rad);
+        double cos_fov_limit = cos(fov_rad / 2.0 + 1.0 * M_PI / 180.0);
+
+        for (j = 0; j < (int)num_stars && num_matches < max_matches; j++) {
+            double dec_s = starfix_catalog_dec(&catalog_stars[j]);
+            double ra_s = starfix_catalog_ra(&catalog_stars[j]);
+            double v_icrs[3] = {cos(dec_s) * cos(ra_s), cos(dec_s) * sin(ra_s), sin(dec_s)};
+
+            double v_cam[3];
+            v_cam[0] = attitude_hint[0][0] * v_icrs[0] + attitude_hint[0][1] * v_icrs[1] +
+                       attitude_hint[0][2] * v_icrs[2];
+            v_cam[1] = attitude_hint[1][0] * v_icrs[0] + attitude_hint[1][1] * v_icrs[1] +
+                       attitude_hint[1][2] * v_icrs[2];
+            v_cam[2] = attitude_hint[2][0] * v_icrs[0] + attitude_hint[2][1] * v_icrs[1] +
+                       attitude_hint[2][2] * v_icrs[2];
+
+            if (v_cam[2] < cos_fov_limit) continue;
+
+            int best_c = -1;
+            double best_dot = -1.0;
+            for (i = 0; i < max_track_centroids; i++) {
+                double dot = v_cam[0] * all_cam_vecs[i][0] + v_cam[1] * all_cam_vecs[i][1] +
+                             v_cam[2] * all_cam_vecs[i][2];
+                if (dot > best_dot) {
+                    best_dot = dot;
+                    best_c = i;
+                }
+            }
+
+            if (best_c >= 0 && best_dot >= cos_match_tol) {
+                matches[num_matches].centroid_idx = best_c;
+                matches[num_matches].catalog_idx = j;
+                num_matches++;
+            }
+        }
+
+        if (num_matches >= 3) {
+            if (telem) {
+                telem->identify_matches = (uint32_t)num_matches;
+            }
+            return STARFIX_SUCCESS;
+        }
+    }
+
+    if (num_centroids < 4) return STARFIX_ERR_NULL_POINTER;
+
+    /* 1. select up to 8 brightest centroids for LIS hashing */
+    int n_test = (num_centroids < 8) ? num_centroids : 8;
+    double cam_vecs[8][3];
+    for (i = 0; i < n_test; i++) {
+        cam_vecs[i][0] = all_cam_vecs[i][0];
+        cam_vecs[i][1] = all_cam_vecs[i][1];
+        cam_vecs[i][2] = all_cam_vecs[i][2];
     }
 
     /* 2. allocate voting table (size: n_test x num_stars) */
@@ -248,7 +307,8 @@ starfix_status_t starfix_identify_stars(int num_centroids, const starfix_centroi
                         /* scan all matching database entries */
                         int hash_scans = 0;
                         while (entry_idx < (int)num_entries &&
-                               hash_entries[entry_idx].hash_key == search_keys[k] && hash_scans < 100) {
+                               hash_entries[entry_idx].hash_key == search_keys[k] &&
+                               hash_scans < 100) {
                             hash_scans++;
                             const starfix_hash_entry_t* cand = &hash_entries[entry_idx];
 
@@ -347,7 +407,9 @@ starfix_status_t starfix_identify_stars(int num_centroids, const starfix_centroi
         }
     }
 
-    if (telem) { telem->identify_matches = (uint32_t)num_matches; }
+    if (telem) {
+        telem->identify_matches = (uint32_t)num_matches;
+    }
     return STARFIX_SUCCESS;
 }
 

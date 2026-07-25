@@ -1,9 +1,9 @@
 #include <math.h>
-#include "starfix_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "starfix_arena.h"
+#include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;
@@ -30,8 +30,9 @@ int main() {
     /* 1. NULL Pointer & Sizing Validations */
     printf("Test 1: Sizing and NULL validations... ");
     double scale = 1.0, bias = 0.0;
-    int ret1 = (RESET_ARENA(), starfix_solve_graph(0, steps_per_node, dt_sec, init_lat, init_lon,
-                                                   NULL, 0, NULL, NULL, &scale, &bias, &arena, NULL));
+    int ret1 =
+        (RESET_ARENA(), starfix_solve_graph(0, steps_per_node, dt_sec, init_lat, init_lon, NULL, 0,
+                                            NULL, NULL, &scale, &bias, &arena, NULL));
     int ret2 =
         (RESET_ARENA(), starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon,
                                             NULL, 0, NULL, NULL, &scale, &bias, &arena, NULL));
@@ -102,9 +103,9 @@ int main() {
     /* solve graph */
     double est_scale = 1.0;
     double est_bias = 0.0;
-    int status = (RESET_ARENA(),
-                  starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, odom,
-                                      num_fixes, fixes, poses, &est_scale, &est_bias, &arena, NULL));
+    int status = (RESET_ARENA(), starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat,
+                                                     init_lon, odom, num_fixes, fixes, poses,
+                                                     &est_scale, &est_bias, &arena, NULL));
 
     if (status >= 0) {
         /* compute final optimized pose error vs true pose at end node */

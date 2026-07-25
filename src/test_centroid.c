@@ -1,10 +1,10 @@
 #include <math.h>
-#include "starfix_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "starfix_centroid.h"
+#include "starfix_status.h"
 
 /* test runner to verify the C centroiding implementation under multiple conditions */
 
@@ -39,7 +39,8 @@ int main() {
     for (i = 0; i < width * height; i++) {
         image[i] = 10;
     }
-    starfix_status_t status_black = starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
+    starfix_status_t status_black =
+        starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
     int count_black = (int)telem.num_stars_detected;
     if (status_black == STARFIX_SUCCESS && count_black == 0) {
         printf("Test 2: Black image (no stars)... Passed\n");
@@ -81,7 +82,8 @@ int main() {
         }
     }
 
-    starfix_status_t status_happy = starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
+    starfix_status_t status_happy =
+        starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
     int count_happy = (int)telem.num_stars_detected;
     if (status_happy == STARFIX_SUCCESS && count_happy == 2) {
         double err0 = sqrt(pow(centroids[0].u - 30.4, 2) + pow(centroids[0].v - 50.8, 2));
@@ -108,7 +110,8 @@ int main() {
             image[y * width + x] = 255;
         }
     }
-    starfix_status_t status_giant = starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
+    starfix_status_t status_giant =
+        starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
     int count_giant = (int)telem.num_stars_detected;
     /* should detect star 0 and star 1, but discard the giant block */
     if (status_giant == STARFIX_SUCCESS && count_giant == 2) {
@@ -150,11 +153,12 @@ int main() {
             starfix_apply_hot_pixel_mask(image, width, height, num_hot, mask_u, mask_v);
 
         /* detect centroids */
-        starfix_status_t status_masked = starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
-    int count_masked = (int)telem.num_stars_detected;
+        starfix_status_t status_masked =
+            starfix_find_centroids(image, width, height, 35, 10, centroids, &telem);
+        int count_masked = (int)telem.num_stars_detected;
 
-        if (mask_status == 0 && status_masked == STARFIX_SUCCESS && count_masked == 1 && fabs(centroids[0].u - 50.295) < 0.1 &&
-            fabs(centroids[0].v - 50.295) < 0.1) {
+        if (mask_status == 0 && status_masked == STARFIX_SUCCESS && count_masked == 1 &&
+            fabs(centroids[0].u - 50.295) < 0.1 && fabs(centroids[0].v - 50.295) < 0.1) {
             printf("Passed\n");
         } else {
             printf("FAILED (status=%d, count_masked=%d, u=%.2f, v=%.2f)\n", mask_status,

@@ -366,9 +366,9 @@ static int do_identify() {
     starfix_match_t matches[20];
     starfix_telemetry_t telem = {0};
     RESET_ARENA();
-    starfix_status_t match_status =
-        starfix_identify_stars(cent_count, centroids, 1024, 1024, 12.0, num_stars, catalog,
-                               num_entries, hash_table, bin_factor, 20, matches, &arena, &telem);
+    starfix_status_t match_status = starfix_identify_stars(
+        cent_count, centroids, 1024, 1024, 12.0, num_stars, catalog, num_entries, hash_table,
+        bin_factor, 20, matches, &arena, &telem, NULL);
     int match_count = (int)telem.identify_matches;
 
     if (match_status != STARFIX_SUCCESS) {
@@ -473,8 +473,8 @@ static int do_estimate_pose() {
     starfix_telemetry_t telem = {0};
     /* use RANSAC solver with a 0.1 degree threshold to filter out any outliers */
     RESET_ARENA();
-    starfix_status_t inlier_status = starfix_solve_attitude_ransac(match_count, cam_vectors, cat_vectors, 0.1,
-                                                    &q_est, R, &arena, &telem);
+    starfix_status_t inlier_status = starfix_solve_attitude_ransac(
+        match_count, cam_vectors, cat_vectors, 0.1, &q_est, R, &arena, &telem);
     int num_inliers = (int)telem.ransac_inliers;
     if (inlier_status != STARFIX_SUCCESS || num_inliers < 2) {
         printf("Attitude solver failed (RANSAC found too few inliers: %d).\n", num_inliers);
@@ -566,8 +566,9 @@ static int do_solve_fix() {
     double solved_lat = 0.0, solved_lon = 0.0;
     starfix_telemetry_t telem = {0};
     RESET_ARENA();
-    starfix_status_t status = starfix_solve_position(50, zenith_cam_meas, R, gha_aries_arr, ap_lat, ap_lon,
-                                        &solved_lat, &solved_lon, &arena, &telem);
+    starfix_status_t status =
+        starfix_solve_position(50, zenith_cam_meas, R, gha_aries_arr, ap_lat, ap_lon, &solved_lat,
+                               &solved_lon, &arena, &telem);
 
     if (status != STARFIX_SUCCESS) {
         printf("Position fix solver failed.\n");
@@ -728,8 +729,9 @@ static int do_fuse_graph() {
     double est_bias = 0.0;
     starfix_telemetry_t telem = {0};
     RESET_ARENA();
-    starfix_status_t status = starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, odom,
-                                     num_fixes, fixes, poses, &est_scale, &est_bias, &arena, &telem);
+    starfix_status_t status =
+        starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, odom, num_fixes,
+                            fixes, poses, &est_scale, &est_bias, &arena, &telem);
 
     if (status == STARFIX_SUCCESS) {
         double err_lat = poses[num_nodes].lat - true_lats[num_nodes];

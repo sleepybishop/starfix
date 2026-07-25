@@ -1,9 +1,9 @@
 #include <math.h>
-#include "starfix_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "starfix_arena.h"
+#include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;
@@ -11,6 +11,7 @@ static starfix_arena_t arena;
     (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
 #include <string.h>
 
+#include "starfix_attitude.h"
 #include "starfix_identify.h"
 
 /* test runner to verify the C implementation of the TETRA Star ID module */
@@ -24,7 +25,7 @@ int main() {
     printf("Test 1: Sizing and NULL validations... ");
     starfix_match_t matches[10];
     int ret1 = (RESET_ARENA(), starfix_identify_stars(0, NULL, 1024, 1024, 12.0, 0, NULL, 0, NULL,
-                                                      50, 10, matches, &arena, NULL));
+                                                      0, 10, matches, &arena, NULL, NULL));
     if (ret1 == -1) {
         printf("Passed\n");
     } else {
@@ -133,12 +134,11 @@ int main() {
 
     /* Run identification */
     starfix_match_t out_matches[20];
-    starfix_status_t match_status =
-        (RESET_ARENA(),
-         starfix_identify_stars(count, centroids, 1024, 1024, 12.0, num_stars, catalog, num_entries,
-                                hash_table, bin_factor, 20, out_matches, &arena, NULL));
+    int ret = (RESET_ARENA(), starfix_identify_stars(count, centroids, 1024, 1024, 12.0, num_stars,
+                                                     catalog, num_entries, hash_table, bin_factor,
+                                                     20, out_matches, &arena, &telem, NULL));
 
-    if (match_status == STARFIX_SUCCESS && telem.identify_matches >= 3) {
+    if (ret == STARFIX_SUCCESS && telem.identify_matches >= 3) {
         printf("Passed\n");
         printf("  Successfully matched %d stars in C!\n", (int)telem.identify_matches);
         int i;
@@ -148,6 +148,42 @@ int main() {
             printf("    Centroid %d matches Catalog Star Index %d (HIP: %d, Name: %s)\n", c_idx,
                    cat_idx, catalog[cat_idx].hip,
                    (catalog[cat_idx].hip == 26241) ? "Hatysa" : "Unknown");
+        }
+        /* 3b. Tracking Mode Check (with attitude hint) */
+        printf("Test 3b: Tracking Mode with Attitude Hint... ");
+        starfix_vector3_t w_vecs[20], v_vecs[20];
+        int m_cnt = (int)telem.identify_matches;
+        for (i = 0; i < m_cnt; i++) {
+            int c_i = out_matches[i].centroid_idx;
+            int cat_i = out_matches[i].catalog_idx;
+            double f_len = 1024.0 / (2.0 * tan((12.0 * M_PI / 180.0) / 2.0));
+            double cx = (centroids[c_i].u - 512.0) / f_len;
+            double cy = -(centroids[c_i].v - 512.0) / f_len;
+            double norm = sqrt(cx * cx + cy * cy + 1.0);
+            w_vecs[i].x = cx / norm;
+            w_vecs[i].y = cy / norm;
+            w_vecs[i].z = 1.0 / norm;
+
+            double dec_s = starfix_catalog_dec(&catalog[cat_i]);
+            double ra_s = starfix_catalog_ra(&catalog[cat_i]);
+            v_vecs[i].x = cos(dec_s) * cos(ra_s);
+            v_vecs[i].y = cos(dec_s) * sin(ra_s);
+            v_vecs[i].z = sin(dec_s);
+        }
+        starfix_quaternion_t q_sol;
+        double R_hint[3][3];
+        starfix_solve_attitude(m_cnt, w_vecs, v_vecs, &q_sol, R_hint);
+
+        starfix_match_t track_matches[20];
+        starfix_telemetry_t telem_track = {0};
+        int track_ret = (RESET_ARENA(), starfix_identify_stars(
+                                            count, centroids, 1024, 1024, 12.0, num_stars, catalog,
+                                            num_entries, hash_table, bin_factor, 20, track_matches,
+                                            &arena, &telem_track, (const double (*)[3])R_hint));
+        if (track_ret == STARFIX_SUCCESS && telem_track.identify_matches >= 3) {
+            printf("Passed (%d matches in tracking mode!)\n", (int)telem_track.identify_matches);
+        } else {
+            printf("FAILED (tracking mode matched %d stars)\n", (int)telem_track.identify_matches);
         }
     } else {
         printf("FAILED (matched only %d stars)\n", (int)telem.identify_matches);

@@ -1,9 +1,9 @@
 #include <math.h>
-#include "starfix_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "starfix_arena.h"
+#include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena;

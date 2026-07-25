@@ -30,7 +30,7 @@ t/test_attitude: src/starfix_attitude.c src/test_attitude.c
 t/test_graph: src/starfix_graph.c src/test_graph.c nanoqsp.o nanoqsp_blas.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-t/test_identify: src/starfix_identify.c src/test_identify.c
+t/test_identify: src/starfix_identify.c src/starfix_attitude.c src/test_identify.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 starfix_cli: src/starfix_cli.c src/starfix_centroid.c src/starfix_identify.c src/starfix_attitude.c src/starfix_solver.c src/starfix_ekf.c src/starfix_graph.c nanoqsp.o nanoqsp_blas.o

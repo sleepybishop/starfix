@@ -6,11 +6,11 @@ use Test::More;
 # EKF (5 tests)
 # Solver (3 tests)
 # Centroiding (5 tests)
-# Attitude (4 tests)
+# Attitude (5 tests)
 # Factor Graph (3 tests)
-# Star ID (4 tests)
-# Total tests: 24
-plan tests => 24;
+# Star ID (5 tests)
+# Total tests: 26
+plan tests => 26;
 
 # Test 1: EKF implementation
 {
@@ -51,6 +51,7 @@ plan tests => 24;
     ok($output =~ /Test 1: Boundary check.*Passed/, "Attitude Test 1 (boundary checks) passed");
     ok($output =~ /Test 2: Happy path attitude estimation.*Passed/, "Attitude Test 2 (Davenport eigenvalues) passed");
     ok($output =~ /Test 3: Collinear degenerate vectors.*Passed/, "Attitude Test 3 (degenerate inputs) passed");
+    ok($output =~ /Test 6: Stellar Aberration Correction.*Passed/, "Attitude Test 4 (stellar aberration correction) passed");
 }
 
 # Test 5: Factor Graph Optimization (batch Gauss-Newton)
@@ -70,4 +71,5 @@ plan tests => 24;
     ok($output =~ /Test 1: Sizing and NULL validations.*Passed/s, "Star ID Test 1 (sizing bounds) passed");
     ok($output =~ /Test 2: Loading binary database.*Passed/s, "Star ID Test 2 (binary database loading) passed");
     ok($output =~ /Test 3: Lost-in-Space Star Identification.*Passed/s, "Star ID Test 3 (pattern search matching) passed");
+    ok($output =~ /Test 3b: Tracking Mode with Attitude Hint.*Passed/s, "Star ID Test 4 (tracking mode with attitude hint) passed");
 }

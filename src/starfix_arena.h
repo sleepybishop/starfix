@@ -6,9 +6,10 @@
 #endif
 
 #include <stddef.h>
-#include "starfix_status.h"
 #include <stdint.h>
 #include <string.h>
+
+#include "starfix_status.h"
 
 typedef struct {
     uint8_t* beg;

@@ -24,8 +24,8 @@ typedef struct {
    - centroids: output array to be populated with detected stars
    - returns: number of centroids detected on success, or a negative value on error */
 starfix_status_t starfix_find_centroids(const unsigned char* image, int width, int height,
-                           unsigned char threshold, int max_centroids,
-                           starfix_centroid_t* centroids, starfix_telemetry_t* telem);
+                                        unsigned char threshold, int max_centroids,
+                                        starfix_centroid_t* centroids, starfix_telemetry_t* telem);
 
 /* scans a dark image (with lens cap on) to identify hot pixels above threshold,
    populating the output mask arrays:

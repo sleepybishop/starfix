@@ -8,7 +8,7 @@
 typedef enum {
     /* Success */
     STARFIX_SUCCESS = 0,
-    
+
     /* General Errors */
     STARFIX_ERR_NULL_POINTER = -1,
     STARFIX_ERR_MEMORY = -2,
@@ -41,20 +41,20 @@ typedef struct {
     /* Centroiding Metrics */
     uint32_t num_stars_detected;
     uint32_t saturated_pixels;
-    
+
     /* ID Metrics */
     uint32_t hash_collisions;
     uint32_t identify_matches;
-    
+
     /* Attitude Metrics */
     uint32_t ransac_iterations;
     uint32_t ransac_inliers;
     double ransac_inlier_ratio;
-    
+
     /* Solver Metrics */
     uint32_t solver_iterations;
     double final_residual;
-    
+
     /* EKF / Graph Metrics */
     double ekf_innovation_norm;
 } starfix_telemetry_t;
@@ -62,8 +62,9 @@ typedef struct {
 #endif /* STARFIX_STATUS_H */
 
 #include <math.h>
-#define STARFIX_ASSERT_VALID_DOUBLE(val) do { \
-    if (isnan(val) || isinf(val)) { \
-        return STARFIX_ERR_DATA_CORRUPTION; \
-    } \
-} while(0)
+#define STARFIX_ASSERT_VALID_DOUBLE(val)        \
+    do {                                        \
+        if (isnan(val) || isinf(val)) {         \
+            return STARFIX_ERR_DATA_CORRUPTION; \
+        }                                       \
+    } while (0)

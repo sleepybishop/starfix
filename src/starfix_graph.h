@@ -37,9 +37,11 @@ typedef struct {
    - est_scale: input/output pointer to speed log scale factor
    - est_bias: input/output pointer to heading bias in radians
    - returns: number of iterations on success, or a negative value on error */
-starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec, double initial_lat,
-                        double initial_lon, const starfix_odometry_t* odom, int num_fixes,
-                        const starfix_fix_t* fixes, starfix_pose_t* poses, double* est_scale,
-                        double* est_bias, starfix_arena_t* arena, starfix_telemetry_t* telem);
+starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec,
+                                     double initial_lat, double initial_lon,
+                                     const starfix_odometry_t* odom, int num_fixes,
+                                     const starfix_fix_t* fixes, starfix_pose_t* poses,
+                                     double* est_scale, double* est_bias, starfix_arena_t* arena,
+                                     starfix_telemetry_t* telem);
 
 #endif /* STARFIX_GRAPH_H */

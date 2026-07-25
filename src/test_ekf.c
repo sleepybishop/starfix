@@ -1,9 +1,9 @@
 #include <math.h>
-#include "starfix_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "starfix_ekf.h"
+#include "starfix_status.h"
 
 /* test runner to verify the C EKF implementation under multiple conditions */
 

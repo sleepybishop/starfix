@@ -24,8 +24,9 @@ typedef struct {
    - arena: memory arena for solver allocations
    - returns: number of iterations on success, or a negative value on error */
 starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* zenith_cam,
-                           const double R_est[3][3], const double* gha_aries, double ap_lat,
-                           double ap_lon, double* solved_lat, double* solved_lon,
-                           starfix_arena_t* arena, starfix_telemetry_t* telem);
+                                        const double R_est[3][3], const double* gha_aries,
+                                        double ap_lat, double ap_lon, double* solved_lat,
+                                        double* solved_lon, starfix_arena_t* arena,
+                                        starfix_telemetry_t* telem);
 
 #endif /* STARFIX_SOLVER_H */

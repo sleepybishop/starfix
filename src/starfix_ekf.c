@@ -1,8 +1,9 @@
 #include "starfix_ekf.h"
-#include "starfix_status.h"
 
 #include <math.h>
 #include <stddef.h>
+
+#include "starfix_status.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -49,7 +50,7 @@ starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double
 }
 
 starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, double heading_deg,
-                         double dt_sec) {
+                                     double dt_sec) {
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
@@ -106,7 +107,8 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     return STARFIX_SUCCESS;
 }
 
-starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat, double celestial_lon, starfix_telemetry_t* telem) {
+starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat,
+                                     double celestial_lon, starfix_telemetry_t* telem) {
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
@@ -155,7 +157,7 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     filter->scale += K[2][0] * y[0] + K[2][1] * y[1];
     filter->bias += K[3][0] * y[0] + K[3][1] * y[1];
 
-    double inno_norm = y[0]*y[0] + y[1]*y[1];
+    double inno_norm = y[0] * y[0] + y[1] * y[1];
     if (telem) telem->ekf_innovation_norm = inno_norm;
     if (inno_norm > 10.0) return STARFIX_ERR_EKF_DIVERGENCE;
 

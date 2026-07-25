@@ -1,10 +1,10 @@
 #include "starfix_solver.h"
-#include "starfix_status.h"
 
 #include <math.h>
 #include <stdlib.h>
 
 #include "../deps/nanoqsp/nanoqsp.h"
+#include "starfix_status.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -17,9 +17,10 @@ static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 static double rad_to_deg(double rad) { return rad * 180.0 / M_PI; }
 
 starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* zenith_cam,
-                           const double R_est[3][3], const double* gha_aries, double ap_lat,
-                           double ap_lon, double* solved_lat, double* solved_lon,
-                           starfix_arena_t* arena, starfix_telemetry_t* telem) {
+                                        const double R_est[3][3], const double* gha_aries,
+                                        double ap_lat, double ap_lon, double* solved_lat,
+                                        double* solved_lon, starfix_arena_t* arena,
+                                        starfix_telemetry_t* telem) {
     if (num_meas <= 0) {
         return STARFIX_ERR_INVALID_PARAM;
     }
@@ -107,7 +108,9 @@ starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* z
         /* output solved coordinates in degrees */
         *solved_lat = ap_lat + rad_to_deg(x_off[0]);
         *solved_lon = ap_lon + rad_to_deg(x_off[1]);
-        if (telem) { telem->solver_iterations = (uint32_t)result; }
+        if (telem) {
+            telem->solver_iterations = (uint32_t)result;
+        }
         return STARFIX_SUCCESS;
     }
     return STARFIX_ERR_SOLVER_DIVERGENCE;

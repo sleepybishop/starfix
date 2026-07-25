@@ -2,10 +2,10 @@
 #define STARFIX_IDENTIFY_H
 
 #include <stdint.h>
-#include "starfix_status.h"
 
 #include "starfix_arena.h"
 #include "starfix_centroid.h"
+#include "starfix_status.h"
 
 /* starfix_identify: C API for lost-in-space star identification using TETRA.
    loads a flat binary database and matches detected sub-pixel camera centroids
@@ -97,10 +97,11 @@ int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_s
    - max_matches: maximum number of matches to output
    - matches: output array of matched pairs
    - returns: number of successfully identified stars, or negative value on error */
-starfix_status_t starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroids, double width,
-                           double height, double fov_deg, uint32_t num_stars,
-                           const starfix_catalog_star_t* catalog_stars, uint32_t num_entries,
-                           const starfix_hash_entry_t* hash_entries, uint32_t bin_factor,
-                           int max_matches, starfix_match_t* matches, starfix_arena_t* arena, starfix_telemetry_t* telem);
+starfix_status_t starfix_identify_stars(
+    int num_centroids, const starfix_centroid_t* centroids, double width, double height,
+    double fov_deg, uint32_t num_stars, const starfix_catalog_star_t* catalog_stars,
+    uint32_t num_entries, const starfix_hash_entry_t* hash_entries, uint32_t bin_factor,
+    int max_matches, starfix_match_t* matches, starfix_arena_t* arena, starfix_telemetry_t* telem,
+    const double (*attitude_hint)[3]);
 
 #endif /* STARFIX_IDENTIFY_H */
