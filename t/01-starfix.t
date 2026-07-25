@@ -65,6 +65,9 @@ plan tests => 26;
 
 # Test 6: Star Identification (TETRA Pattern Matching)
 {
+    if (! -f 'data/mock_centroids.json') {
+        system("perl scripts/simulate_camera.pl >/dev/null 2>&1");
+    }
     my $output = `./t/test_identify 2>&1`;
     ok($? == 0, "Star ID test runner executed successfully");
     
