@@ -52,6 +52,7 @@ demo: starfix_cli
 	perl scripts/visualize.pl
 
 db:
+	$(MAKE) -C data hyg
 	perl scripts/generate_database.pl
 
 clean:
