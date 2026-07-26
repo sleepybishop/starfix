@@ -65,7 +65,7 @@ int main() {
     int i;
     for (i = 0; i < total_steps; i++) {
         double current_heading = (i < total_steps / 2) ? 45.0 : 135.0;
-        odom[i].speed = true_speed * true_scale;
+        odom[i].speed = true_speed / true_scale;
         odom[i].heading = current_heading + 4.0; /* 4 degrees compass bias */
     }
 

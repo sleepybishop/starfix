@@ -130,16 +130,41 @@ sub main {
         return sin($val) / cos($val);
     }
     
+    my $year = 1900.0 + (gmtime)[5] + (gmtime)[7] / 365.25;
+    my $T = ($year - 2000.0) / 100.0;
+    my $PI = 3.1415926535897932;
+    my $zeta = 2306.2181 * $T * $PI / (3600.0 * 180.0);
+    my $z = 2306.2181 * $T * $PI / (3600.0 * 180.0);
+    my $theta = 2004.3109 * $T * $PI / (3600.0 * 180.0);
+    
+    my $c_zeta = cos($zeta); my $s_zeta = sin($zeta);
+    my $c_z = cos($z); my $s_z = sin($z);
+    my $c_th = cos($theta); my $s_th = sin($theta);
+    
+    my $P00 = $c_zeta * $c_th * $c_z - $s_zeta * $s_z;
+    my $P01 = -$s_zeta * $c_th * $c_z - $c_zeta * $s_z;
+    my $P02 = -$s_th * $c_z;
+    my $P10 = $c_zeta * $c_th * $s_z + $s_zeta * $c_z;
+    my $P11 = -$s_zeta * $c_th * $s_z + $c_zeta * $c_z;
+    my $P12 = -$s_th * $s_z;
+    my $P20 = $c_zeta * $s_th;
+    my $P21 = -$s_zeta * $s_th;
+    my $P22 = $c_th;
+    
     my @visible_stars;
     my $idx = 0;
     foreach my $star (@stars) {
         my $ra_s = $star->{ra};
         my $dec_s = $star->{dec};
         
+        my $v0_0 = cos($dec_s) * cos($ra_s);
+        my $v0_1 = cos($dec_s) * sin($ra_s);
+        my $v0_2 = sin($dec_s);
+        
         my $v_star = [
-            cos($dec_s) * cos($ra_s),
-            cos($dec_s) * sin($ra_s),
-            sin($dec_s)
+            $P00 * $v0_0 + $P01 * $v0_1 + $P02 * $v0_2,
+            $P10 * $v0_0 + $P11 * $v0_1 + $P12 * $v0_2,
+            $P20 * $v0_0 + $P21 * $v0_1 + $P22 * $v0_2
         ];
         
         # dot product for rotation projection

@@ -420,34 +420,47 @@ int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_s
 
     double T = (year - 2000.0) / 100.0; /* Julian centuries */
 
-    /* Precession constants in radians per century */
-    double m = 46.1244 * M_PI / (3600.0 * 180.0);
-    double n = 20.0431 * M_PI / (3600.0 * 180.0);
+    /* IAU 1976 Precession angles */
+    double zeta_rad = (2306.2181 * T) * M_PI / (3600.0 * 180.0);
+    double z_rad = (2306.2181 * T) * M_PI / (3600.0 * 180.0);
+    double theta_rad = (2004.3109 * T) * M_PI / (3600.0 * 180.0);
+
+    double c_zeta = cos(zeta_rad), s_zeta = sin(zeta_rad);
+    double c_z = cos(z_rad), s_z = sin(z_rad);
+    double c_th = cos(theta_rad), s_th = sin(theta_rad);
+
+    double P[3][3];
+    P[0][0] = c_zeta * c_th * c_z - s_zeta * s_z;
+    P[0][1] = -s_zeta * c_th * c_z - c_zeta * s_z;
+    P[0][2] = -s_th * c_z;
+    P[1][0] = c_zeta * c_th * s_z + s_zeta * c_z;
+    P[1][1] = -s_zeta * c_th * s_z + c_zeta * c_z;
+    P[1][2] = -s_th * s_z;
+    P[2][0] = c_zeta * s_th;
+    P[2][1] = -s_zeta * s_th;
+    P[2][2] = c_th;
 
     uint32_t i;
     for (i = 0; i < num_stars; i++) {
         double ra0 = starfix_catalog_ra(&catalog[i]);
         double dec0 = starfix_catalog_dec(&catalog[i]);
 
-        double d_dec = T * n * cos(ra0);
+        double v0[3];
+        v0[0] = cos(dec0) * cos(ra0);
+        v0[1] = cos(dec0) * sin(ra0);
+        v0[2] = sin(dec0);
 
-        /* prevent tangent singularity near the celestial poles (Dec close to pi/2) */
-        double tan_dec = 0.0;
-        if (fabs(dec0) < 1.55) {
-            tan_dec = tan(dec0);
-        }
-        double d_ra = T * (m + n * sin(ra0) * tan_dec);
+        double v1[3];
+        v1[0] = P[0][0] * v0[0] + P[0][1] * v0[1] + P[0][2] * v0[2];
+        v1[1] = P[1][0] * v0[0] + P[1][1] * v0[1] + P[1][2] * v0[2];
+        v1[2] = P[2][0] * v0[0] + P[2][1] * v0[1] + P[2][2] * v0[2];
 
-        double ra_new = ra0 + d_ra;
-        double dec_new = dec0 + d_dec;
+        double ra_new = atan2(v1[1], v1[0]);
+        double dec_new = asin(v1[2]);
 
         /* Wrap RA to [0, 2pi] */
         while (ra_new < 0.0) ra_new += 2.0 * M_PI;
         while (ra_new >= 2.0 * M_PI) ra_new -= 2.0 * M_PI;
-
-        /* Clamp Dec to [-pi/2, pi/2] */
-        if (dec_new < -M_PI / 2.0) dec_new = -M_PI / 2.0;
-        if (dec_new > M_PI / 2.0) dec_new = M_PI / 2.0;
 
         starfix_catalog_set_ra(&catalog[i], ra_new);
         starfix_catalog_set_dec(&catalog[i], dec_new);

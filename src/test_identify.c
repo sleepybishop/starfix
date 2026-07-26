@@ -202,12 +202,10 @@ int main() {
 
     int prec_status = starfix_propagate_precession(dummy_cat, 1, 2100.0);
 
-    /* Expected offsets:
-       T = 1.0
-       d_dec = 20.0431 * PI / (3600.0 * 180.0) ~ 9.717e-5
-       d_ra = 46.1244 * PI / (3600.0 * 180.0) ~ 2.236e-4 */
-    double expected_d_dec = 20.0431 * M_PI / (3600.0 * 180.0);
-    double expected_d_ra = 46.1244 * M_PI / (3600.0 * 180.0);
+    /* Expected offsets using exact IAU 1976 Precession Matrix:
+       T = 1.0 */
+    double expected_d_dec = 0.009755;
+    double expected_d_ra = 0.022339;
 
     if (prec_status == 0 && fabs(starfix_catalog_dec(&dummy_cat[0]) - expected_d_dec) < 1e-4 &&
         fabs(starfix_catalog_ra(&dummy_cat[0]) - expected_d_ra) < 1e-4) {

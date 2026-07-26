@@ -74,7 +74,7 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     F[0][2] = -pred_d_lat / filter->scale;
     F[0][3] = dist_nm * sin(corrected_heading) / 60.0;
 
-    F[1][0] = pred_d_lon * tan(lat_rad);
+    F[1][0] = pred_d_lon * tan(lat_rad) * (M_PI / 180.0);
     F[1][2] = -pred_d_lon / filter->scale;
     F[1][3] = -dist_nm * cos(corrected_heading) / (60.0 * cos(lat_rad));
 
@@ -150,6 +150,8 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     double y[2];
     y[0] = celestial_lat - filter->lat;
     y[1] = celestial_lon - filter->lon;
+    while (y[1] > 180.0) y[1] -= 360.0;
+    while (y[1] < -180.0) y[1] += 360.0;
 
     /* update state: x = x + K * y */
     filter->lat += K[0][0] * y[0] + K[0][1] * y[1];
@@ -186,10 +188,10 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
         }
     }
 
-    /* copy back to P */
+    /* copy back to P and symmetrize */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
-            filter->P[i][j] = P_next[i][j];
+            filter->P[i][j] = (P_next[i][j] + P_next[j][i]) / 2.0;
         }
     }
     return STARFIX_SUCCESS;

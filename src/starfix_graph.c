@@ -135,30 +135,31 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
                 sum_sin += dist_nm * sin(h_rad);
             }
 
-            double lat_prev_rad = deg_to_rad(lat_prev);
-            double cos_lat_prev = cos(lat_prev_rad);
-            if (fabs(cos_lat_prev) < 1e-6) cos_lat_prev = 1e-6;
+            double lat_mid_rad = deg_to_rad((lat_prev + lat_curr) / 2.0);
+            double cos_lat_mid = cos(lat_mid_rad);
+            if (fabs(cos_lat_mid) < 1e-6) cos_lat_mid = 1e-6;
 
-            double exp_d_lat = sum_cos / (60.0 * s_val);
-            double exp_d_lon = sum_sin / (60.0 * s_val * cos_lat_prev);
+            double exp_d_lat = sum_cos * s_val / 60.0;
+            double exp_d_lon = sum_sin * s_val / (60.0 * cos_lat_mid);
 
             /* lat odometry residual */
             r[r_idx] = lat_curr - lat_prev - exp_d_lat;
             W[r_idx] = 1.0 / sigma_odom_lat;
             J[r_idx * N + 2 * (i - 1)] = -1.0;
             J[r_idx * N + 2 * i] = 1.0;
-            J[r_idx * N + (N - 2)] = exp_d_lat / s_val;
-            J[r_idx * N + (N - 1)] = -sum_sin / (60.0 * s_val);
+            J[r_idx * N + (N - 2)] = -exp_d_lat / s_val;
+            J[r_idx * N + (N - 1)] = -sum_sin * s_val / 60.0;
             r_idx++;
 
             /* lon odometry residual */
             r[r_idx] = lon_curr - lon_prev - exp_d_lon;
             W[r_idx] = 1.0 / sigma_odom_lon;
-            J[r_idx * N + 2 * (i - 1)] = -exp_d_lon * tan(lat_prev_rad);
+            J[r_idx * N + 2 * (i - 1)] = -exp_d_lon * tan(lat_mid_rad) * 0.5 * (M_PI / 180.0);
+            J[r_idx * N + 2 * i] = -exp_d_lon * tan(lat_mid_rad) * 0.5 * (M_PI / 180.0);
             J[r_idx * N + 2 * (i - 1) + 1] = -1.0;
             J[r_idx * N + 2 * i + 1] = 1.0;
-            J[r_idx * N + (N - 2)] = exp_d_lon / s_val;
-            J[r_idx * N + (N - 1)] = sum_cos / (60.0 * s_val * cos_lat_prev);
+            J[r_idx * N + (N - 2)] = -exp_d_lon / s_val;
+            J[r_idx * N + (N - 1)] = sum_cos * s_val / (60.0 * cos_lat_mid);
             r_idx++;
         }
 
