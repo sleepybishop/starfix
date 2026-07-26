@@ -62,13 +62,34 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
         return -5;
     }
 
-    if (fread(*catalog_stars, sizeof(starfix_catalog_star_t), n_stars, f) != n_stars ||
+    char* cat_buf = (char*)malloc((size_t)n_stars * 12);
+    if (cat_buf == NULL || fread(cat_buf, 12, n_stars, f) != n_stars ||
         fread(*hash_entries, sizeof(starfix_hash_entry_t), n_entries, f) != n_entries) {
+        if (cat_buf != NULL) free(cat_buf);
         free(*catalog_stars);
         free(*hash_entries);
+        *catalog_stars = NULL;
+        *hash_entries = NULL;
         fclose(f);
-        return -6;
+        return -5;
     }
+
+    uint32_t i;
+    for (i = 0; i < n_stars; i++) {
+        int32_t hip;
+        uint16_t ra_q, dec_q;
+        uint8_t mag_q;
+        memcpy(&hip, cat_buf + i * 12, 4);
+        memcpy(&ra_q, cat_buf + i * 12 + 4, 2);
+        memcpy(&dec_q, cat_buf + i * 12 + 6, 2);
+        memcpy(&mag_q, cat_buf + i * 12 + 8, 1);
+
+        (*catalog_stars)[i].hip = hip;
+        (*catalog_stars)[i].ra = ra_q * (2.0 * M_PI) / 65535.0;
+        (*catalog_stars)[i].dec = dec_q * M_PI / 65535.0 - M_PI / 2.0;
+        (*catalog_stars)[i].mag = mag_q * 10.0 / 255.0 - 2.0;
+    }
+    free(cat_buf);
 
     *num_stars = n_stars;
     *num_entries = n_entries;

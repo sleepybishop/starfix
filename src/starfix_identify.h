@@ -16,42 +16,29 @@
 #endif
 
 typedef struct {
-    int32_t hip;    /* HIP ID (-1 if unknown) */
-    uint16_t ra_q;  /* quantized RA (0 to 65535 map to 0 to 2pi) */
-    uint16_t dec_q; /* quantized Dec (0 to 65535 map to -pi/2 to pi/2) */
-    uint8_t mag_q;  /* quantized Mag (0 to 255 map to -2.0 to 8.0) */
-    uint8_t pad[3]; /* padding for alignment */
+    int32_t hip; /* HIP ID (-1 if unknown) */
+    double ra;   /* RA in radians (0 to 2pi) */
+    double dec;  /* Dec in radians (-pi/2 to pi/2) */
+    double mag;  /* Magnitude */
 } starfix_catalog_star_t;
 
 /* Inline helper functions for quantization/dequantization */
-static inline double starfix_catalog_ra(const starfix_catalog_star_t* star) {
-    return star->ra_q * (2.0 * M_PI) / 65535.0;
-}
+static inline double starfix_catalog_ra(const starfix_catalog_star_t* star) { return star->ra; }
 
-static inline double starfix_catalog_dec(const starfix_catalog_star_t* star) {
-    return star->dec_q * M_PI / 65535.0 - M_PI / 2.0;
-}
+static inline double starfix_catalog_dec(const starfix_catalog_star_t* star) { return star->dec; }
 
-static inline double starfix_catalog_mag(const starfix_catalog_star_t* star) {
-    return star->mag_q * 10.0 / 255.0 - 2.0;
-}
+static inline double starfix_catalog_mag(const starfix_catalog_star_t* star) { return star->mag; }
 
 static inline void starfix_catalog_set_ra(starfix_catalog_star_t* star, double ra) {
-    while (ra < 0.0) ra += 2.0 * M_PI;
-    while (ra >= 2.0 * M_PI) ra -= 2.0 * M_PI;
-    star->ra_q = (uint16_t)(ra * 65535.0 / (2.0 * M_PI) + 0.5);
+    star->ra = ra;
 }
 
 static inline void starfix_catalog_set_dec(starfix_catalog_star_t* star, double dec) {
-    if (dec < -M_PI / 2.0) dec = -M_PI / 2.0;
-    if (dec > M_PI / 2.0) dec = M_PI / 2.0;
-    star->dec_q = (uint16_t)((dec + M_PI / 2.0) * 65535.0 / M_PI + 0.5);
+    star->dec = dec;
 }
 
 static inline void starfix_catalog_set_mag(starfix_catalog_star_t* star, double mag) {
-    if (mag < -2.0) mag = -2.0;
-    if (mag > 8.0) mag = 8.0;
-    star->mag_q = (uint8_t)((mag + 2.0) * 255.0 / 10.0 + 0.5);
+    star->mag = mag;
 }
 
 typedef struct {
