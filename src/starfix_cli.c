@@ -319,7 +319,8 @@ static int do_centroid() {
 
     starfix_centroid_t centroids[200];
     starfix_telemetry_t telem = {0};
-    starfix_status_t count_status = starfix_find_centroids(img, w, h, 35, 200, centroids, &telem);
+    starfix_status_t count_status =
+        starfix_find_centroids(img, w, h, 35, 200, centroids, NULL, 1, &telem);
     int count = (int)telem.num_stars_detected;
     free(img);
 
