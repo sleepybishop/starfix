@@ -1,0 +1,7 @@
+# ignore temp data folder and generated overlay image
+data/
+solve_overlay.jpg
+solve_photo_highlight.py
+solve_overlay_highlight.jpg
+pahl.jpg
+pa.jpg

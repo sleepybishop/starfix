@@ -47,9 +47,7 @@ check: all
 	prove -v t/*.t
 
 demo: starfix_cli
-	perl scripts/simulate_camera.pl
-	./starfix_cli --pipeline
-	perl scripts/visualize.pl
+	$(MAKE) -C demo_photo
 
 db:
 	$(MAKE) -C data hyg

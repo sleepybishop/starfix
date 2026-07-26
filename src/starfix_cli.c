@@ -333,7 +333,7 @@ static int do_centroid() {
     return 0;
 }
 
-static int do_identify() {
+static int do_identify(int width, int height, double fov_deg) {
     starfix_catalog_star_t* catalog = NULL;
     starfix_hash_entry_t* hash_table = NULL;
     uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
@@ -341,8 +341,11 @@ static int do_identify() {
     printf("Loading database from data/starfix_db.bin...\n");
     if (starfix_load_db("data/starfix_db.bin", &catalog, &num_stars, &hash_table, &num_entries,
                         &bin_factor) != 0) {
-        printf("Error loading binary database.\n");
-        return -1;
+        if (starfix_load_db("../data/starfix_db.bin", &catalog, &num_stars, &hash_table,
+                            &num_entries, &bin_factor) != 0) {
+            printf("Error loading binary database.\n");
+            return -1;
+        }
     }
 
     /* calculate current year dynamically and propagate stellar precession */
@@ -367,7 +370,7 @@ static int do_identify() {
     starfix_telemetry_t telem = {0};
     RESET_ARENA();
     starfix_status_t match_status = starfix_identify_stars(
-        cent_count, centroids, 1024, 1024, 12.0, num_stars, catalog, num_entries, hash_table,
+        cent_count, centroids, width, height, fov_deg, num_stars, catalog, num_entries, hash_table,
         bin_factor, 20, matches, &arena, &telem, NULL);
     int match_count = (int)telem.identify_matches;
 
@@ -605,6 +608,157 @@ static int do_solve_fix() {
     return 0;
 }
 
+static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, double ap_lat,
+                          double ap_lon, double fov_deg) {
+    starfix_catalog_star_t* catalog = NULL;
+    starfix_hash_entry_t* hash_table = NULL;
+    uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
+
+    if (starfix_load_db("data/starfix_db.bin", &catalog, &num_stars, &hash_table, &num_entries,
+                        &bin_factor) != 0) {
+        if (starfix_load_db("../data/starfix_db.bin", &catalog, &num_stars, &hash_table,
+                            &num_entries, &bin_factor) != 0) {
+            printf("Failed to load db (tried data/starfix_db.bin and ../data/starfix_db.bin).\n");
+            return 1;
+        }
+    }
+    starfix_propagate_precession(catalog, num_stars, 2026.56);
+
+    /* load detected centroids */
+    starfix_centroid_t centroids[100];
+    int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 100);
+    if (cent_count <= 0) {
+        cent_count = read_centroids_json("../data/detected_centroids.json", centroids, 100);
+    }
+    if (cent_count <= 0) {
+        printf("Error: Could not load centroids from data/detected_centroids.json\n");
+        free(catalog);
+        free(hash_table);
+        return 1;
+    }
+
+    /* load identified stars */
+    starfix_match_t matches[100];
+    int match_count = read_identified_json("data/identified_stars.json", matches, 100);
+    if (match_count <= 0) {
+        match_count = read_identified_json("../data/identified_stars.json", matches, 100);
+    }
+    if (match_count < 3) {
+        printf(
+            "Error: Need at least 3 identified stars in data/identified_stars.json (found: %d)\n",
+            match_count);
+        free(catalog);
+        free(hash_table);
+        return 1;
+    }
+
+    double fov_rad = fov_deg * M_PI / 180.0;
+    double crop_size = 560.0;
+    double f_len = crop_size / (2.0 * tan(fov_rad / 2.0));
+
+    starfix_vector3_t* cam_vecs =
+        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
+    starfix_vector3_t* cel_vecs =
+        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
+
+    int i;
+    for (i = 0; i < match_count; i++) {
+        int c_idx = matches[i].centroid_idx;
+        int cat_idx = matches[i].catalog_idx;
+
+        /* convert centroids to camera frame unit vectors */
+        double cx = (centroids[c_idx].u - crop_size / 2.0) / f_len;
+        double cy = (centroids[c_idx].v - crop_size / 2.0) / f_len;
+        double cz = 1.0;
+        double norm = sqrt(cx * cx + cy * cy + cz * cz);
+        cam_vecs[i].x = cx / norm;
+        cam_vecs[i].y = cy / norm;
+        cam_vecs[i].z = cz / norm;
+
+        /* convert catalog coordinates to celestial frame unit vectors */
+        double dec = starfix_catalog_dec(&catalog[cat_idx]);
+        double ra = starfix_catalog_ra(&catalog[cat_idx]);
+        cel_vecs[i].x = cos(dec) * cos(ra);
+        cel_vecs[i].y = cos(dec) * sin(ra);
+        cel_vecs[i].z = sin(dec);
+    }
+
+    /* estimate camera attitude matrix R */
+    double R[3][3];
+    starfix_quaternion_t q_est;
+    starfix_status_t status = starfix_solve_attitude(match_count, cam_vecs, cel_vecs, &q_est, R);
+
+    /* calculate rms projection error */
+    double sum_sq_err = 0.0;
+    if (status == STARFIX_SUCCESS) {
+        for (i = 0; i < match_count; i++) {
+            int c_idx = matches[i].centroid_idx;
+            double vx = R[0][0] * cel_vecs[i].x + R[0][1] * cel_vecs[i].y + R[0][2] * cel_vecs[i].z;
+            double vy = R[1][0] * cel_vecs[i].x + R[1][1] * cel_vecs[i].y + R[1][2] * cel_vecs[i].z;
+            double vz = R[2][0] * cel_vecs[i].x + R[2][1] * cel_vecs[i].y + R[2][2] * cel_vecs[i].z;
+            if (vz > 0.0) {
+                double u_proj = crop_size / 2.0 + (vx / vz) * f_len;
+                double v_proj = crop_size / 2.0 + (vy / vz) * f_len;
+                double du = u_proj - centroids[c_idx].u;
+                double dv = v_proj - centroids[c_idx].v;
+                sum_sq_err += du * du + dv * dv;
+            }
+        }
+        double rms_err = sqrt(sum_sq_err / (double)match_count);
+        printf("RMS_ERROR: %f pixels\n", rms_err);
+    }
+
+    free(cam_vecs);
+    free(cel_vecs);
+
+    if (status != STARFIX_SUCCESS) {
+        printf("Attitude estimation failed with status %d\n", status);
+        free(catalog);
+        free(hash_table);
+        return 1;
+    }
+
+    /* Convert R to Euler Angles */
+    double R_flat[9] = {R[0][0], R[0][1], R[0][2], R[1][0], R[1][1],
+                        R[1][2], R[2][0], R[2][1], R[2][2]};
+    double ra_deg, dec_deg, roll_deg;
+    starfix_rotation_to_euler(R_flat, &ra_deg, &dec_deg, &roll_deg);
+
+    printf("\nEstimated Attitude:\n");
+    printf("  Right Ascension : %.4f degrees\n", ra_deg);
+    printf("  Declination     : %.4f degrees\n", dec_deg);
+    printf("  Roll            : %.4f degrees\n", roll_deg);
+    printf("ROTATION_MATRIX: %f %f %f %f %f %f %f %f %f\n", R[0][0], R[0][1], R[0][2], R[1][0],
+           R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]);
+
+    /* Solve absolute position using command line parameters */
+    double solved_lat = 0.0;
+    double solved_lon = 0.0;
+
+    starfix_vector3_t zenith_meas[1];
+    zenith_meas[0].x = g_x;
+    zenith_meas[0].y = g_y;
+    zenith_meas[0].z = g_z;
+
+    RESET_ARENA();
+    starfix_telemetry_t telem = {0};
+    starfix_status_t solve_status =
+        starfix_solve_position(1, zenith_meas, (const double (*)[3])R, &gha_aries, ap_lat, ap_lon,
+                               &solved_lat, &solved_lon, &arena, &telem);
+
+    if (solve_status == STARFIX_SUCCESS) {
+        printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
+        printf("  Solved Latitude  : %f degrees North\n", solved_lat);
+        printf("  Solved Longitude : %f degrees East\n", solved_lon);
+    } else {
+        printf("Position fix solver failed with status %d\n", solve_status);
+    }
+
+    free(catalog);
+    free(hash_table);
+    return (solve_status == STARFIX_SUCCESS) ? 0 : 1;
+}
+
 static int do_fuse_ekf() {
     printf("Starting EKF Sensor Fusion Simulation...\n");
     starfix_ekf_t ekf;
@@ -774,6 +928,9 @@ int main(int argc, char** argv) {
         printf("  --identify       Match detected centroids to database catalog quads\n");
         printf("  --estimate-pose  Estimate camera attitude pointing matrix R\n");
         printf("  --solve-fix      Solve absolute absolute Latitude/Longitude position fix\n");
+        printf(
+            "  --solve-photo    Solve terrestrial position from a real photo (uses: <gha_aries> "
+            "<g_x> <g_y> <g_z> <ap_lat> <ap_lon>)\n");
         printf("  --fuse-ekf       Run real-time EKF trajectory fusion simulation\n");
         printf("  --fuse-graph     Run Factor Graph batch trajectory smoother simulation\n");
         printf("  --pipeline       Run the entire end-to-end star tracker pipeline natively\n");
@@ -783,11 +940,30 @@ int main(int argc, char** argv) {
     if (strcmp(argv[1], "--centroid") == 0) {
         return do_centroid();
     } else if (strcmp(argv[1], "--identify") == 0) {
-        return do_identify();
+        int w = (argc >= 3) ? atoi(argv[2]) : 1024;
+        int h = (argc >= 4) ? atoi(argv[3]) : 1024;
+        double fov = (argc >= 5) ? atof(argv[4]) : 12.0;
+        return do_identify(w, h, fov);
     } else if (strcmp(argv[1], "--estimate-pose") == 0) {
         return do_estimate_pose();
     } else if (strcmp(argv[1], "--solve-fix") == 0) {
         return do_solve_fix();
+    } else if (strcmp(argv[1], "--solve-photo") == 0) {
+        if (argc < 8) {
+            printf(
+                "Usage: %s --solve-photo <gha_aries> <g_x> <g_y> <g_z> <ap_lat> <ap_lon> "
+                "[fov_deg]\n",
+                argv[0]);
+            return 1;
+        }
+        double gha = atof(argv[2]);
+        double gx = atof(argv[3]);
+        double gy = atof(argv[4]);
+        double gz = atof(argv[5]);
+        double lat = atof(argv[6]);
+        double lon = atof(argv[7]);
+        double fov_deg = (argc >= 9) ? atof(argv[8]) : 11.28;
+        return do_solve_photo(gha, gx, gy, gz, lat, lon, fov_deg);
     } else if (strcmp(argv[1], "--fuse-ekf") == 0) {
         return do_fuse_ekf();
     } else if (strcmp(argv[1], "--fuse-graph") == 0) {
@@ -795,7 +971,7 @@ int main(int argc, char** argv) {
     } else if (strcmp(argv[1], "--pipeline") == 0) {
         printf("Starting Native C End-to-End StarFix Pipeline...\n");
         if (do_centroid() != 0) return 1;
-        if (do_identify() != 0) return 1;
+        if (do_identify(1024, 1024, 12.0) != 0) return 1;
         if (do_estimate_pose() != 0) return 1;
         if (do_solve_fix() != 0) return 1;
         printf("\nPipeline execution completed successfully!\n");

@@ -221,7 +221,7 @@ starfix_status_t starfix_identify_stars(
         {2, 0, 1, 3}, {2, 0, 3, 1}, {2, 1, 0, 3}, {2, 1, 3, 0}, {2, 3, 0, 1}, {2, 3, 1, 0},
         {3, 0, 1, 2}, {3, 0, 2, 1}, {3, 1, 0, 2}, {3, 1, 2, 0}, {3, 2, 0, 1}, {3, 2, 1, 0}};
 
-    double angle_tolerance = 0.1 * M_PI / 180.0; /* 0.1 degrees tolerance */
+    double angle_tolerance = 0.5 * M_PI / 180.0; /* 0.5 degrees tolerance for real sensors */
 
     /* 3. generate all combinations of 4 centroids (quads) */
     int a, b, c, d;
