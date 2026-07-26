@@ -159,6 +159,7 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
     if (telem) {
         telem->num_stars_detected = (uint32_t)count;
     }
+    free(visited);
     return STARFIX_SUCCESS;
 }
 
