@@ -200,7 +200,7 @@ int main() {
     starfix_catalog_set_dec(&dummy_cat[0], 0.0);
     starfix_catalog_set_mag(&dummy_cat[0], 2.0);
 
-    int prec_status = starfix_propagate_precession(dummy_cat, 1, 2100.0);
+    int prec_status = starfix_propagate_precession(dummy_cat, 1, 2100.0, NULL);
 
     /* Expected offsets using exact IAU 1976 Precession Matrix:
        T = 1.0 */

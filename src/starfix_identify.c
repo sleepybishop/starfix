@@ -85,8 +85,10 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
         memcpy(&mag_q, cat_buf + i * 12 + 8, 1);
 
         (*catalog_stars)[i].hip = hip;
-        (*catalog_stars)[i].ra = ra_q * (2.0 * M_PI) / 65535.0;
-        (*catalog_stars)[i].dec = dec_q * M_PI / 65535.0 - M_PI / 2.0;
+        (*catalog_stars)[i].ra0 = ra_q * (2.0 * M_PI) / 65535.0;
+        (*catalog_stars)[i].dec0 = dec_q * M_PI / 65535.0 - M_PI / 2.0;
+        (*catalog_stars)[i].ra = (*catalog_stars)[i].ra0;
+        (*catalog_stars)[i].dec = (*catalog_stars)[i].dec0;
         (*catalog_stars)[i].mag = mag_q * 10.0 / 255.0 - 2.0;
     }
     free(cat_buf);
@@ -434,9 +436,14 @@ starfix_status_t starfix_identify_stars(
     return STARFIX_SUCCESS;
 }
 
-int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_stars, double year) {
+int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
+                                 double* cached_year) {
     if (catalog == NULL || num_stars == 0) {
         return STARFIX_ERR_NULL_POINTER;
+    }
+
+    if (cached_year && fabs(year - *cached_year) < (1.0 / 365.25)) {
+        return 0; /* cached coordinates are still valid (within ~1 day) */
     }
 
     double T = (year - 2000.0) / 100.0; /* Julian centuries */
@@ -463,8 +470,8 @@ int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_s
 
     uint32_t i;
     for (i = 0; i < num_stars; i++) {
-        double ra0 = starfix_catalog_ra(&catalog[i]);
-        double dec0 = starfix_catalog_dec(&catalog[i]);
+        double ra0 = catalog[i].ra0;
+        double dec0 = catalog[i].dec0;
 
         double v0[3];
         v0[0] = cos(dec0) * cos(ra0);
@@ -487,5 +494,8 @@ int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_s
         starfix_catalog_set_dec(&catalog[i], dec_new);
     }
 
+    if (cached_year) {
+        *cached_year = year;
+    }
     return 0;
 }

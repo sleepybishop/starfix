@@ -17,9 +17,11 @@
 
 typedef struct {
     int32_t hip; /* HIP ID (-1 if unknown) */
-    double ra;   /* RA in radians (0 to 2pi) */
-    double dec;  /* Dec in radians (-pi/2 to pi/2) */
+    double ra;   /* Precessed RA in radians (0 to 2pi) */
+    double dec;  /* Precessed Dec in radians (-pi/2 to pi/2) */
     double mag;  /* Magnitude */
+    double ra0;  /* Base J2000 RA in radians */
+    double dec0; /* Base J2000 Dec in radians */
 } starfix_catalog_star_t;
 
 /* Inline helper functions for quantization/dequantization */
@@ -63,12 +65,11 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
                     uint32_t* num_stars, starfix_hash_entry_t** hash_entries, uint32_t* num_entries,
                     uint32_t* bin_factor);
 
-/* applies general precession correction from J2000.0 to the target year:
-   - catalog: array of catalog stars (modified in-place)
-   - num_stars: number of stars in catalog
-   - year: target observation year (e.g., 2026.5)
-   - returns: 0 on success, negative value on error */
-int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_stars, double year);
+/* propagates the entire catalog's J2000 coordinates to the specified year using IAU 1976 precession
+   matrix. if cached_year is provided, it skips computation if the year hasn't meaningfully changed
+   (>1 day). returns 0 on success. */
+int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
+                                 double* cached_year);
 
 /* performs lost-in-space star identification using TETRA:
    - num_centroids: number of detected centroids

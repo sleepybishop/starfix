@@ -354,7 +354,7 @@ static int do_identify(int width, int height, double fov_deg) {
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
     printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_precession(catalog, num_stars, current_year);
+    starfix_propagate_precession(catalog, num_stars, current_year, NULL);
 
     starfix_centroid_t centroids[100];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 100);
@@ -425,7 +425,7 @@ static int do_estimate_pose() {
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
     printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_precession(catalog, num_stars, current_year);
+    starfix_propagate_precession(catalog, num_stars, current_year, NULL);
 
     /* load detected centroids */
     starfix_centroid_t centroids[100];
@@ -623,7 +623,7 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
             return 1;
         }
     }
-    starfix_propagate_precession(catalog, num_stars, 2026.56);
+    starfix_propagate_precession(catalog, num_stars, 2026.56, NULL);
 
     /* load detected centroids */
     starfix_centroid_t centroids[100];
