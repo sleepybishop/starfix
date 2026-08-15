@@ -10,6 +10,7 @@
 #include "starfix_ekf.h"
 #include "starfix_graph.h"
 #include "starfix_identify.h"
+#include "starfix_nmea.h"
 #include "starfix_solver.h"
 
 /* 10 MB statically allocated memory pool for the entire pipeline */
@@ -759,6 +760,18 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
         printf("  Solved Latitude  : %f degrees North\n", solved_lat);
         printf("  Solved Longitude : %f degrees East\n", solved_lon);
+
+        /* Write NMEA sentences to test file */
+        char nmea_buf[256];
+        time_t t_now = time(NULL);
+        if (starfix_format_nmea(solved_lat, solved_lon, t_now, nmea_buf, sizeof(nmea_buf)) == 0) {
+            FILE* f_nmea = fopen("data/starfix.nmea", "w");
+            if (f_nmea) {
+                fputs(nmea_buf, f_nmea);
+                fclose(f_nmea);
+                printf("  NMEA stream written to data/starfix.nmea\n");
+            }
+        }
     } else {
         printf("Position fix solver failed with status %d\n", solve_status);
     }
