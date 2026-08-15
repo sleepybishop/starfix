@@ -65,10 +65,10 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
                     uint32_t* num_stars, starfix_hash_entry_t** hash_entries, uint32_t* num_entries,
                     uint32_t* bin_factor);
 
-/* propagates the entire catalog's J2000 coordinates to the specified year using IAU 1976 precession
-   matrix. if cached_year is provided, it skips computation if the year hasn't meaningfully changed
+/* propagates the entire catalog's J2000 coordinates to the specified year using full astrometry
+   models. if cached_year is provided, it skips computation if the year hasn't meaningfully changed
    (>1 day). returns 0 on success. */
-int starfix_propagate_precession(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
+int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
                                  double* cached_year);
 
 /* performs lost-in-space star identification using TETRA:

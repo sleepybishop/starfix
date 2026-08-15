@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "starfix_astrometry.h"
 #include "starfix_status.h"
 
 #ifndef M_PI
@@ -378,13 +379,6 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
         return STARFIX_ERR_INVALID_PARAM;
     }
 
-    /* Standard refraction constant at 10 deg C and 1010 hPa:
-       60.2 arcseconds = 0.00029186 radians */
-    double A_std = 60.2 * M_PI / (3600.0 * 180.0);
-
-    /* Scale based on actual temperature and pressure */
-    double A = A_std * (press_hpa / 1010.0) * (283.15 / (273.15 + temp_c));
-
     int i;
     for (i = 0; i < num_stars; i++) {
         /* Dot product to get cosine of apparent Zenith angle */
@@ -395,12 +389,14 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
         if (cos_theta < -1.0) cos_theta = -1.0;
 
         double theta_a = acos(cos_theta);
+        double alt_a = M_PI / 2.0 - theta_a;
+        double alt_t;
 
         /* Only correct if angle is not completely at Zenith (where refraction is zero)
-           and not close to horizon (where tan(theta) blows up) */
-        if (theta_a > 1e-6 && theta_a < 1.3) {
-            double R = A * tan(theta_a);
-            double theta_t = theta_a + R;
+           and not close to horizon or below it */
+        if (theta_a > 1e-6 && alt_a > 0.0) {
+            starfix_unrefract(press_hpa, temp_c, alt_a, &alt_t);
+            double theta_t = M_PI / 2.0 - alt_t;
 
             /* Orthogonal component to z_cam in the plane of w */
             double ux = w[i].x - cos_theta * z_cam->x;

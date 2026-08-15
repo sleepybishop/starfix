@@ -354,7 +354,7 @@ static int do_identify(int width, int height, double fov_deg) {
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
     printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_precession(catalog, num_stars, current_year, NULL);
+    starfix_propagate_astrometry(catalog, num_stars, current_year, NULL);
 
     starfix_centroid_t centroids[100];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 100);
@@ -425,7 +425,7 @@ static int do_estimate_pose() {
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
     printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_precession(catalog, num_stars, current_year, NULL);
+    starfix_propagate_astrometry(catalog, num_stars, current_year, NULL);
 
     /* load detected centroids */
     starfix_centroid_t centroids[100];
@@ -623,7 +623,7 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
             return 1;
         }
     }
-    starfix_propagate_precession(catalog, num_stars, 2026.56, NULL);
+    starfix_propagate_astrometry(catalog, num_stars, 2026.56, NULL);
 
     /* load detected centroids */
     starfix_centroid_t centroids[100];
@@ -684,10 +684,18 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         cel_vecs[i].z = sin(dec);
     }
 
-    /* estimate camera attitude matrix R */
+    /* PASS 1: estimate rough camera attitude matrix R */
     double R[3][3];
     starfix_quaternion_t q_est;
     starfix_status_t status = starfix_solve_attitude(match_count, cam_vecs, cel_vecs, &q_est, R);
+
+    if (status == STARFIX_SUCCESS) {
+        /* PASS 2: un-refract centroids using zenith vector, then re-solve attitude */
+        printf("Applying libastro atmospheric refraction correction (two-pass attitude)...\n");
+        starfix_vector3_t z_cam = {g_x, g_y, g_z};
+        starfix_correct_refraction(match_count, cam_vecs, &z_cam, 10.0, 1010.0);
+        status = starfix_solve_attitude(match_count, cam_vecs, cel_vecs, &q_est, R);
+    }
 
     /* calculate rms projection error */
     double sum_sq_err = 0.0;
