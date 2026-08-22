@@ -444,11 +444,25 @@ static int do_estimate_pose() {
         (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
     starfix_vector3_t* cat_vectors =
         (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
+    if (cam_vectors == NULL || cat_vectors == NULL) {
+        free(catalog);
+        free(hash_table);
+        free(cam_vectors);
+        free(cat_vectors);
+        return -1;
+    }
 
     int i;
     for (i = 0; i < match_count; i++) {
         int c_idx = matches[i].centroid_idx;
         int cat_idx = matches[i].catalog_idx;
+        if (c_idx < 0 || c_idx >= cent_count || cat_idx < 0 || (uint32_t)cat_idx >= num_stars) {
+            free(catalog);
+            free(hash_table);
+            free(cam_vectors);
+            free(cat_vectors);
+            return -1;
+        }
 
         /* camera vector */
         double cx = (centroids[c_idx].u - 512.0) / focal_length;
@@ -611,7 +625,7 @@ static int do_solve_fix() {
 }
 
 static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, double ap_lat,
-                          double ap_lon, double fov_deg) {
+                          double ap_lon, double fov_deg, double observation_year) {
     starfix_catalog_star_t* catalog = NULL;
     starfix_hash_entry_t* hash_table = NULL;
     uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
@@ -624,7 +638,12 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
             return 1;
         }
     }
-    starfix_propagate_astrometry(catalog, num_stars, 2026.56, NULL);
+    if (starfix_propagate_astrometry(catalog, num_stars, observation_year, NULL) != 0) {
+        printf("Failed to propagate catalog astrometry.\n");
+        free(catalog);
+        free(hash_table);
+        return 1;
+    }
 
     /* load detected centroids */
     starfix_centroid_t centroids[100];
@@ -662,15 +681,29 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
     starfix_vector3_t* cel_vecs =
         (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
+    if (cam_vecs == NULL || cel_vecs == NULL) {
+        free(catalog);
+        free(hash_table);
+        free(cam_vecs);
+        free(cel_vecs);
+        return 1;
+    }
 
     int i;
     for (i = 0; i < match_count; i++) {
         int c_idx = matches[i].centroid_idx;
         int cat_idx = matches[i].catalog_idx;
+        if (c_idx < 0 || c_idx >= cent_count || cat_idx < 0 || (uint32_t)cat_idx >= num_stars) {
+            free(catalog);
+            free(hash_table);
+            free(cam_vecs);
+            free(cel_vecs);
+            return 1;
+        }
 
         /* convert centroids to camera frame unit vectors */
         double cx = (centroids[c_idx].u - crop_size / 2.0) / f_len;
-        double cy = (centroids[c_idx].v - crop_size / 2.0) / f_len;
+        double cy = -(centroids[c_idx].v - crop_size / 2.0) / f_len;
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
         cam_vecs[i].x = cx / norm;
@@ -708,7 +741,7 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
             double vz = R[2][0] * cel_vecs[i].x + R[2][1] * cel_vecs[i].y + R[2][2] * cel_vecs[i].z;
             if (vz > 0.0) {
                 double u_proj = crop_size / 2.0 + (vx / vz) * f_len;
-                double v_proj = crop_size / 2.0 + (vy / vz) * f_len;
+                double v_proj = crop_size / 2.0 - (vy / vz) * f_len;
                 double du = u_proj - centroids[c_idx].u;
                 double dv = v_proj - centroids[c_idx].v;
                 sum_sq_err += du * du + dv * dv;
@@ -952,7 +985,7 @@ int main(int argc, char** argv) {
         printf("  --solve-fix      Solve absolute absolute Latitude/Longitude position fix\n");
         printf(
             "  --solve-photo    Solve terrestrial position from a real photo (uses: <gha_aries> "
-            "<g_x> <g_y> <g_z> <ap_lat> <ap_lon>)\n");
+            "<g_x> <g_y> <g_z> <ap_lat> <ap_lon> [fov_deg] [observation_year])\n");
         printf("  --fuse-ekf       Run real-time EKF trajectory fusion simulation\n");
         printf("  --fuse-graph     Run Factor Graph batch trajectory smoother simulation\n");
         printf("  --pipeline       Run the entire end-to-end star tracker pipeline natively\n");
@@ -974,7 +1007,7 @@ int main(int argc, char** argv) {
         if (argc < 8) {
             printf(
                 "Usage: %s --solve-photo <gha_aries> <g_x> <g_y> <g_z> <ap_lat> <ap_lon> "
-                "[fov_deg]\n",
+                "[fov_deg] [observation_year]\n",
                 argv[0]);
             return 1;
         }
@@ -985,7 +1018,16 @@ int main(int argc, char** argv) {
         double lat = atof(argv[6]);
         double lon = atof(argv[7]);
         double fov_deg = (argc >= 9) ? atof(argv[8]) : 11.28;
-        return do_solve_photo(gha, gx, gy, gz, lat, lon, fov_deg);
+        double observation_year;
+        if (argc >= 10) {
+            observation_year = atof(argv[9]);
+        } else {
+            time_t now = time(NULL);
+            struct tm* now_utc = gmtime(&now);
+            if (now_utc == NULL) return 1;
+            observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
+        }
+        return do_solve_photo(gha, gx, gy, gz, lat, lon, fov_deg, observation_year);
     } else if (strcmp(argv[1], "--fuse-ekf") == 0) {
         return do_fuse_ekf();
     } else if (strcmp(argv[1], "--fuse-graph") == 0) {

@@ -10,6 +10,7 @@ TARGET=starfix_prototype
 CORE_SRCS=../src/starfix_centroid.c \
           ../src/starfix_identify.c \
           ../src/starfix_attitude.c \
+          ../src/starfix_astrometry.c \
           ../src/starfix_solver.c \
           ../src/starfix_ekf.c \
           ../src/starfix_graph.c
