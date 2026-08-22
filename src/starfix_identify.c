@@ -1,5 +1,6 @@
 #include "starfix_identify.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -27,6 +28,14 @@ static uint32_t compress_hash_key(const int* code) {
     return key_val;
 }
 
+static uint16_t decode_le16(const unsigned char* p) {
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static uint32_t decode_le32(const unsigned char* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
 int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
                     uint32_t* num_stars, starfix_hash_entry_t** hash_entries, uint32_t* num_entries,
                     uint32_t* bin_factor) {
@@ -35,22 +44,41 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
         return STARFIX_ERR_NULL_POINTER;
     }
 
+    *catalog_stars = NULL;
+    *hash_entries = NULL;
+    *num_stars = 0;
+    *num_entries = 0;
+    *bin_factor = 0;
+
     FILE* f = fopen(db_path, "rb");
     if (f == NULL) {
         return STARFIX_ERR_MEMORY;
     }
 
-    char magic[4];
-    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "SFIX", 4) != 0) {
+    if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
-        return -3;
+        return STARFIX_ERR_DATA_CORRUPTION;
+    }
+    long file_size = ftell(f);
+    if (file_size < 16 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return STARFIX_ERR_DATA_CORRUPTION;
     }
 
-    uint32_t n_stars, n_entries, b_factor;
-    if (fread(&n_stars, 4, 1, f) != 1 || fread(&n_entries, 4, 1, f) != 1 ||
-        fread(&b_factor, 4, 1, f) != 1) {
+    unsigned char header[16];
+    if (fread(header, 1, sizeof(header), f) != sizeof(header) || memcmp(header, "SFIX", 4) != 0) {
         fclose(f);
-        return -4;
+        return STARFIX_ERR_DATA_CORRUPTION;
+    }
+
+    uint32_t n_stars = decode_le32(header + 4);
+    uint32_t n_entries = decode_le32(header + 8);
+    uint32_t b_factor = decode_le32(header + 12);
+    uint64_t expected_size = 16ULL + (uint64_t)n_stars * 12ULL + (uint64_t)n_entries * 12ULL;
+    if (n_stars == 0 || n_stars > 65536U || n_entries == 0 || n_entries > (uint32_t)INT_MAX ||
+        b_factor == 0 || b_factor > 63U || expected_size != (uint64_t)file_size) {
+        fclose(f);
+        return STARFIX_ERR_DATA_CORRUPTION;
     }
 
     *catalog_stars =
@@ -60,31 +88,22 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
     if (*catalog_stars == NULL || *hash_entries == NULL) {
         if (*catalog_stars != NULL) free(*catalog_stars);
         if (*hash_entries != NULL) free(*hash_entries);
-        fclose(f);
-        return -5;
-    }
-
-    char* cat_buf = (char*)malloc((size_t)n_stars * 12);
-    if (cat_buf == NULL || fread(cat_buf, 12, n_stars, f) != n_stars ||
-        fread(*hash_entries, sizeof(starfix_hash_entry_t), n_entries, f) != n_entries) {
-        if (cat_buf != NULL) free(cat_buf);
-        free(*catalog_stars);
-        free(*hash_entries);
         *catalog_stars = NULL;
         *hash_entries = NULL;
         fclose(f);
-        return -5;
+        return STARFIX_ERR_MEMORY;
     }
 
     uint32_t i;
     for (i = 0; i < n_stars; i++) {
+        unsigned char record[12];
+        if (fread(record, 1, sizeof(record), f) != sizeof(record)) goto corrupt;
         int32_t hip;
-        uint16_t ra_q, dec_q;
-        uint8_t mag_q;
-        memcpy(&hip, cat_buf + i * 12, 4);
-        memcpy(&ra_q, cat_buf + i * 12 + 4, 2);
-        memcpy(&dec_q, cat_buf + i * 12 + 6, 2);
-        memcpy(&mag_q, cat_buf + i * 12 + 8, 1);
+        uint32_t hip_bits = decode_le32(record);
+        uint16_t ra_q = decode_le16(record + 4);
+        uint16_t dec_q = decode_le16(record + 6);
+        uint8_t mag_q = record[8];
+        memcpy(&hip, &hip_bits, sizeof(hip));
 
         (*catalog_stars)[i].hip = hip;
         (*catalog_stars)[i].ra0 = ra_q * (2.0 * M_PI) / 65535.0;
@@ -93,7 +112,21 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
         (*catalog_stars)[i].dec = (*catalog_stars)[i].dec0;
         (*catalog_stars)[i].mag = mag_q * 10.0 / 255.0 - 2.0;
     }
-    free(cat_buf);
+
+    uint32_t previous_key = 0;
+    for (i = 0; i < n_entries; i++) {
+        unsigned char record[12];
+        if (fread(record, 1, sizeof(record), f) != sizeof(record)) goto corrupt;
+        starfix_hash_entry_t* entry = &(*hash_entries)[i];
+        entry->hash_key = decode_le32(record);
+        int j;
+        for (j = 0; j < 4; j++) {
+            entry->stars[j] = decode_le16(record + 4 + 2 * j);
+            if ((uint32_t)entry->stars[j] >= n_stars) goto corrupt;
+        }
+        if (i > 0 && entry->hash_key < previous_key) goto corrupt;
+        previous_key = entry->hash_key;
+    }
 
     *num_stars = n_stars;
     *num_entries = n_entries;
@@ -101,6 +134,14 @@ int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
 
     fclose(f);
     return 0;
+
+corrupt:
+    free(*catalog_stars);
+    free(*hash_entries);
+    *catalog_stars = NULL;
+    *hash_entries = NULL;
+    fclose(f);
+    return STARFIX_ERR_DATA_CORRUPTION;
 }
 
 /* binary search helper to find the first entry matching a hash key */
@@ -149,9 +190,13 @@ starfix_status_t starfix_identify_stars(
     const double (*attitude_hint)[3]) {
     int i, j;
 
-    if (num_centroids < 3 || centroids == NULL || catalog_stars == NULL || hash_entries == NULL ||
-        matches == NULL || max_matches <= 0) {
+    if (num_centroids < 3 || centroids == NULL || catalog_stars == NULL || matches == NULL) {
         return STARFIX_ERR_NULL_POINTER;
+    }
+    if (width <= 0.0 || height <= 0.0 || fov_deg <= 0.0 || fov_deg >= 180.0 || !isfinite(width) ||
+        !isfinite(height) || !isfinite(fov_deg) || num_stars == 0 ||
+        num_stars > (uint32_t)INT_MAX || max_matches <= 0) {
+        return STARFIX_ERR_INVALID_PARAM;
     }
 
     double fov_rad = fov_deg * M_PI / 180.0;
@@ -166,13 +211,15 @@ starfix_status_t starfix_identify_stars(
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
         all_cam_vecs[i][0] = cx / norm;
-        all_cam_vecs[i][1] = cy / norm;
+        /* Image rows increase downward; camera-frame +Y increases upward. */
+        all_cam_vecs[i][1] = -cy / norm;
         all_cam_vecs[i][2] = cz / norm;
     }
 
     if (attitude_hint != NULL) {
         /* TRACKING MODE */
         int num_matches = 0;
+        int centroid_used[20] = {0};
         double match_tol_rad = 0.5 * M_PI / 180.0;
         double cos_match_tol = cos(match_tol_rad);
         double cos_fov_limit = cos(fov_rad / 2.0 + 1.0 * M_PI / 180.0);
@@ -204,8 +251,10 @@ starfix_status_t starfix_identify_stars(
             }
 
             if (best_c >= 0 && best_dot >= cos_match_tol) {
+                if (centroid_used[best_c]) continue;
                 matches[num_matches].centroid_idx = best_c;
                 matches[num_matches].catalog_idx = j;
+                centroid_used[best_c] = 1;
                 num_matches++;
             }
         }
@@ -219,6 +268,10 @@ starfix_status_t starfix_identify_stars(
     }
 
     if (num_centroids < 4) return STARFIX_ERR_NULL_POINTER;
+    if (hash_entries == NULL || num_entries == 0 || bin_factor == 0 || bin_factor > 63U ||
+        arena == NULL) {
+        return STARFIX_ERR_INVALID_PARAM;
+    }
 
     /* 1. select up to 8 brightest centroids for LIS hashing */
     int n_test = (num_centroids < 8) ? num_centroids : 8;
@@ -339,13 +392,22 @@ starfix_status_t starfix_identify_stars(
 
                             /* extract candidate star unit vectors */
                             double cat_vecs[4][3];
+                            int candidate_valid = 1;
                             for (i = 0; i < 4; i++) {
                                 int c_idx = cand->stars[i];
+                                if (c_idx < 0 || (uint32_t)c_idx >= num_stars) {
+                                    candidate_valid = 0;
+                                    break;
+                                }
                                 double dec_s = starfix_catalog_dec(&catalog_stars[c_idx]);
                                 double ra_s = starfix_catalog_ra(&catalog_stars[c_idx]);
                                 cat_vecs[i][0] = cos(dec_s) * cos(ra_s);
                                 cat_vecs[i][1] = cos(dec_s) * sin(ra_s);
                                 cat_vecs[i][2] = sin(dec_s);
+                            }
+                            if (!candidate_valid) {
+                                entry_idx++;
+                                continue;
                             }
 
                             /* calculate 6 pairwise angles in catalog frame */
@@ -435,7 +497,7 @@ starfix_status_t starfix_identify_stars(
     if (telem) {
         telem->identify_matches = (uint32_t)num_matches;
     }
-    return STARFIX_SUCCESS;
+    return (num_matches >= 3) ? STARFIX_SUCCESS : STARFIX_ERR_IDENTIFY_NO_MATCH;
 }
 
 int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
@@ -443,6 +505,7 @@ int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_s
     if (catalog == NULL || num_stars == 0) {
         return STARFIX_ERR_NULL_POINTER;
     }
+    if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
 
     if (cached_year && fabs(year - *cached_year) < (1.0 / 365.25)) {
         return 0; /* cached coordinates are still valid (within ~1 day) */

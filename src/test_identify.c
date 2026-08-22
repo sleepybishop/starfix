@@ -55,6 +55,40 @@ int main() {
         return -1;
     }
 
+    /* 2b. Corrupt database indices must be rejected before catalog access. */
+    printf("Test 2b: Rejecting corrupt database indices... ");
+    const char* corrupt_path = "/tmp/starfix_corrupt_db.bin";
+    unsigned char corrupt_db[40] = {
+        'S', 'F', 'I', 'X', 1, 0, 0, 0,             /* one catalog star */
+        1,   0,   0,   0,                           /* one hash entry */
+        50,  0,   0,   0,                           /* bin factor */
+        0,   0,   0,   0,   0, 0, 0, 0, 0, 0, 0, 0, /* catalog record */
+        0,   0,   0,   0,   1, 0, 0, 0, 0, 0, 0, 0  /* invalid star index 1 */
+    };
+    FILE* corrupt_file = fopen(corrupt_path, "wb");
+    starfix_catalog_star_t* corrupt_catalog = NULL;
+    starfix_hash_entry_t* corrupt_hash = NULL;
+    uint32_t corrupt_stars = 0, corrupt_entries = 0, corrupt_factor = 0;
+    int corrupt_status = STARFIX_ERR_MEMORY;
+    if (corrupt_file != NULL) {
+        if (fwrite(corrupt_db, 1, sizeof(corrupt_db), corrupt_file) == sizeof(corrupt_db)) {
+            fclose(corrupt_file);
+            corrupt_file = NULL;
+            corrupt_status = starfix_load_db(corrupt_path, &corrupt_catalog, &corrupt_stars,
+                                             &corrupt_hash, &corrupt_entries, &corrupt_factor);
+        }
+        if (corrupt_file != NULL) fclose(corrupt_file);
+        remove(corrupt_path);
+    }
+    if (corrupt_status == STARFIX_ERR_DATA_CORRUPTION && corrupt_catalog == NULL &&
+        corrupt_hash == NULL) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (status=%d)\n", corrupt_status);
+        free(corrupt_catalog);
+        free(corrupt_hash);
+    }
+
     /* 3. Lost-in-Space Star Identification */
     printf("Test 3: Lost-in-Space Star Identification... ");
 
@@ -184,7 +218,19 @@ int main() {
                                             num_entries, hash_table, bin_factor, 20, track_matches,
                                             &arena, &telem_track, (const double (*)[3])R_hint));
         if (track_ret == STARFIX_SUCCESS && telem_track.identify_matches >= 3) {
-            printf("Passed (%d matches in tracking mode!)\n", (int)telem_track.identify_matches);
+            int unique = 1;
+            int a, b;
+            for (a = 0; a < (int)telem_track.identify_matches; a++) {
+                for (b = a + 1; b < (int)telem_track.identify_matches; b++) {
+                    if (track_matches[a].centroid_idx == track_matches[b].centroid_idx) unique = 0;
+                }
+            }
+            if (unique) {
+                printf("Passed (%d unique matches in tracking mode!)\n",
+                       (int)telem_track.identify_matches);
+            } else {
+                printf("FAILED (tracking mode reused a centroid)\n");
+            }
         } else {
             printf("FAILED (tracking mode matched %d stars)\n", (int)telem_track.identify_matches);
         }
@@ -194,8 +240,10 @@ int main() {
 
     /* 4. Stellar Precession Propagation Check */
     printf("Test 4: Stellar Precession Propagation... ");
-    starfix_catalog_star_t dummy_cat[1];
+    starfix_catalog_star_t dummy_cat[1] = {{0}};
     dummy_cat[0].hip = 12345;
+    dummy_cat[0].ra0 = 0.0;
+    dummy_cat[0].dec0 = 0.0;
     starfix_catalog_set_ra(&dummy_cat[0], 0.0);
     starfix_catalog_set_dec(&dummy_cat[0], 0.0);
     starfix_catalog_set_mag(&dummy_cat[0], 2.0);
