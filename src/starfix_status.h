@@ -1,6 +1,7 @@
 #ifndef STARFIX_STATUS_H
 #define STARFIX_STATUS_H
 
+#include <math.h>
 #include <stdint.h>
 
 /* starfix_status: Comprehensive status codes for starfix telemetry */
@@ -59,12 +60,11 @@ typedef struct {
     double ekf_innovation_norm;
 } starfix_telemetry_t;
 
-#endif /* STARFIX_STATUS_H */
-
-#include <math.h>
 #define STARFIX_ASSERT_VALID_DOUBLE(val)        \
     do {                                        \
         if (isnan(val) || isinf(val)) {         \
             return STARFIX_ERR_DATA_CORRUPTION; \
         }                                       \
     } while (0)
+
+#endif /* STARFIX_STATUS_H */

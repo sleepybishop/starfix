@@ -24,8 +24,14 @@ starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* z
     if (num_meas <= 0) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    if (zenith_cam == NULL || gha_aries == NULL || solved_lat == NULL || solved_lon == NULL) {
+    if (zenith_cam == NULL || R_est == NULL || gha_aries == NULL || solved_lat == NULL ||
+        solved_lon == NULL || arena == NULL) {
         return STARFIX_ERR_NULL_POINTER;
+    }
+    STARFIX_ASSERT_VALID_DOUBLE(ap_lat);
+    STARFIX_ASSERT_VALID_DOUBLE(ap_lon);
+    if (ap_lat <= -90.0 || ap_lat >= 90.0 || ap_lon < -180.0 || ap_lon > 180.0) {
+        return STARFIX_ERR_INVALID_PARAM;
     }
     int i;
     int m = 2 * num_meas;

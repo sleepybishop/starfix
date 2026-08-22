@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "starfix_arena.h"
+#include "starfix_astrometry.h"
 #include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
@@ -31,11 +32,13 @@ int main() {
     printf("Test 1: Boundary check... ");
     int ret1 = starfix_solve_attitude(1, w_dummy, v_dummy, &q_est, R_est);
     int ret2 = starfix_solve_attitude(2, NULL, v_dummy, &q_est, R_est);
+    int ret3 = (RESET_ARENA(),
+                starfix_solve_attitude_ransac(2, NULL, v_dummy, 0.1, &q_est, R_est, &arena, NULL));
 
-    if (ret1 < 0 && ret2 < 0) {
+    if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
     } else {
-        printf("FAILED (got %d, %d)\n", ret1, ret2);
+        printf("FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
     }
 
     /* 2. Happy Path Attitude Estimation */
@@ -181,19 +184,16 @@ int main() {
 
     int ref_status = starfix_correct_refraction(1, &w_refraction, &z_cam, 10.0, 1010.0);
 
-    /* Expected:
-       A = 60.2 arcseconds * PI / (180.0 * 3600.0) ~ 2.9186e-4
-       R = A * tan(10 degrees) ~ 5.146e-5
-       theta_t = theta_a + R */
-    double A_val = 60.2 * M_PI / (3600.0 * 180.0);
-    double R_val = A_val * tan(theta_a);
-    double theta_t = theta_a + R_val;
+    double apparent_alt = M_PI / 2.0 - theta_a;
+    double true_alt;
+    starfix_unrefract(1010.0, 10.0, apparent_alt, &true_alt);
+    double theta_t = M_PI / 2.0 - true_alt;
 
     double expected_x = sin(theta_t);
     double expected_z = cos(theta_t);
 
-    if (ref_status == 0 && fabs(w_refraction.x - expected_x) < 1e-7 &&
-        fabs(w_refraction.z - expected_z) < 1e-7) {
+    if (ref_status == 0 && fabs(w_refraction.x - expected_x) < 1e-12 &&
+        fabs(w_refraction.z - expected_z) < 1e-12) {
         printf("Passed\n");
     } else {
         printf("FAILED (status=%d, x=%f (exp=%f), z=%f (exp=%f))\n", ref_status, w_refraction.x,

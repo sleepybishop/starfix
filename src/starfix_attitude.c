@@ -259,14 +259,20 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
     if (num_stars < 2) {
         return STARFIX_ERR_INVALID_PARAM;
     }
+    if (w == NULL || v == NULL || q_est == NULL || R_est == NULL || arena == NULL) {
+        return STARFIX_ERR_NULL_POINTER;
+    }
+    if (!isfinite(threshold_deg) || threshold_deg <= 0.0 || threshold_deg >= 180.0) {
+        return STARFIX_ERR_INVALID_PARAM;
+    }
     int _i;
     for (_i = 0; _i < num_stars; _i++) {
         STARFIX_ASSERT_VALID_DOUBLE(w[_i].x);
         STARFIX_ASSERT_VALID_DOUBLE(w[_i].y);
         STARFIX_ASSERT_VALID_DOUBLE(w[_i].z);
-    }
-    if (w == NULL || v == NULL || q_est == NULL || R_est == NULL) {
-        return STARFIX_ERR_ATTITUDE_DEGENERATE;
+        STARFIX_ASSERT_VALID_DOUBLE(v[_i].x);
+        STARFIX_ASSERT_VALID_DOUBLE(v[_i].y);
+        STARFIX_ASSERT_VALID_DOUBLE(v[_i].z);
     }
 
     /* Convert threshold to cosine value to avoid calling acos() inside the loop */
@@ -331,6 +337,10 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
                 best_inliers[k_in] = current_inliers[k_in];
             }
         }
+    }
+
+    if (telem) {
+        telem->ransac_iterations = (uint32_t)max_iterations;
     }
 
     /* 5. re-fit using all inliers in the best set */

@@ -30,11 +30,15 @@ int main() {
                                                       &solved_lat, &solved_lon, &arena, NULL));
     int ret2 = (RESET_ARENA(), starfix_solve_position(1, NULL, R_dummy, &gha_dummy, 34.0, -118.0,
                                                       &solved_lat, &solved_lon, &arena, NULL));
+    starfix_vector3_t zenith_dummy = {0.0, 0.0, 1.0};
+    int ret3 =
+        (RESET_ARENA(), starfix_solve_position(1, &zenith_dummy, NULL, &gha_dummy, 34.0, -118.0,
+                                               &solved_lat, &solved_lon, &arena, NULL));
 
-    if (ret1 < 0 && ret2 < 0) {
+    if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
     } else {
-        printf("FAILED (got %d, %d)\n", ret1, ret2);
+        printf("FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
     }
 
     /* 2. Happy Path Fix Solver */

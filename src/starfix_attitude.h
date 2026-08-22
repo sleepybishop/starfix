@@ -31,7 +31,7 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
    - threshold_deg: maximum angular error for an inlier (in degrees)
    - q_est: output optimal quaternion
    - R_est: output optimal 3x3 rotation matrix
-   - returns: number of inliers on success, negative value on error */
+   - returns: STARFIX_SUCCESS or a negative error; inlier counts are written to telem */
 starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
                                                const starfix_vector3_t* v, double threshold_deg,
                                                starfix_quaternion_t* q_est, double R_est[3][3],
