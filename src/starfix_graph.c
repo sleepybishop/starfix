@@ -347,7 +347,7 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
 
         int result = nanoqsp_solve_box_sparse(N, &D_sparse, d_vec, lb, ub, delta_X, &config);
 
-        if (result < 0) {
+        if (result < 0 && result != NANOQSP_ERR_MAX_ITERATIONS) {
             /* solver failed */
             return STARFIX_ERR_SOLVER_DIVERGENCE;
         }
