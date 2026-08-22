@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "starfix_ekf.h"
 #include "starfix_status.h"
@@ -76,6 +77,18 @@ int main() {
         printf("Passed\n");
     } else {
         printf("FAILED (moved too much: %f, %f)\n", filter.lat - old_lat, filter.lon - old_lon);
+    }
+
+    /* 5. A rejected innovation must not partially mutate filter state. */
+    printf("Test 5: Divergent update is atomic... ");
+    starfix_ekf_init(&filter, 10.0, 20.0);
+    starfix_ekf_t before = filter;
+    int divergent_status = starfix_ekf_correct(&filter, 80.0, 150.0, NULL);
+    int state_changed = memcmp(&filter, &before, sizeof(filter)) != 0;
+    if (divergent_status == STARFIX_ERR_EKF_DIVERGENCE && !state_changed) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (status=%d, state changed=%d)\n", divergent_status, state_changed);
     }
 
     return 0;

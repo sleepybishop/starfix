@@ -16,6 +16,10 @@ starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
+    if (!isfinite(init_lat) || !isfinite(init_lon) || init_lat <= -90.0 || init_lat >= 90.0 ||
+        init_lon < -180.0 || init_lon > 180.0) {
+        return STARFIX_ERR_INVALID_PARAM;
+    }
     int i, j;
 
     filter->lat = init_lat;
@@ -54,6 +58,11 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
+    if (!isfinite(speed_knots) || !isfinite(heading_deg) || !isfinite(dt_sec) || dt_sec <= 0.0 ||
+        !isfinite(filter->scale) || fabs(filter->scale) < 1e-9 || !isfinite(filter->lat) ||
+        filter->lat <= -90.0 || filter->lat >= 90.0) {
+        return STARFIX_ERR_INVALID_PARAM;
+    }
     double corrected_speed = speed_knots / filter->scale;
     double corrected_heading = deg_to_rad(heading_deg) - filter->bias;
 
@@ -66,6 +75,8 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
 
     filter->lat += pred_d_lat;
     filter->lon += pred_d_lon;
+    while (filter->lon > 180.0) filter->lon -= 360.0;
+    while (filter->lon < -180.0) filter->lon += 360.0;
 
     /* compute Jacobian matrix F */
     double F[4][4] = {
@@ -112,6 +123,10 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
+    if (!isfinite(celestial_lat) || !isfinite(celestial_lon) || celestial_lat < -90.0 ||
+        celestial_lat > 90.0 || celestial_lon < -180.0 || celestial_lon > 180.0) {
+        return STARFIX_ERR_INVALID_PARAM;
+    }
     double S[2][2];
     double S_inv[2][2];
     double K[4][2];
@@ -153,15 +168,17 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     while (y[1] > 180.0) y[1] -= 360.0;
     while (y[1] < -180.0) y[1] += 360.0;
 
-    /* update state: x = x + K * y */
+    double inno_norm = y[0] * y[0] + y[1] * y[1];
+    if (telem) telem->ekf_innovation_norm = inno_norm;
+    if (inno_norm > 10.0) return STARFIX_ERR_EKF_DIVERGENCE;
+
+    /* Gate the measurement before mutating the filter so a rejected update is atomic. */
     filter->lat += K[0][0] * y[0] + K[0][1] * y[1];
     filter->lon += K[1][0] * y[0] + K[1][1] * y[1];
     filter->scale += K[2][0] * y[0] + K[2][1] * y[1];
     filter->bias += K[3][0] * y[0] + K[3][1] * y[1];
-
-    double inno_norm = y[0] * y[0] + y[1] * y[1];
-    if (telem) telem->ekf_innovation_norm = inno_norm;
-    if (inno_norm > 10.0) return STARFIX_ERR_EKF_DIVERGENCE;
+    while (filter->lon > 180.0) filter->lon -= 360.0;
+    while (filter->lon < -180.0) filter->lon += 360.0;
 
     /* compute covariance update: P = (I - K * H) * P */
     /* K * H is 4x4 matrix with K's columns in first two columns, rest zeros */

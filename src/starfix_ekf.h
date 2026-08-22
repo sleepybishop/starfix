@@ -10,7 +10,7 @@
 typedef struct {
     double lat;     /* latitude in degrees */
     double lon;     /* longitude in degrees */
-    double scale;   /* speed log scale factor */
+    double scale;   /* speed log scale factor: measured speed / true speed */
     double bias;    /* compass heading bias in radians */
     double P[4][4]; /* state covariance matrix */
     double Q[4];    /* diagonal process noise covariance */
