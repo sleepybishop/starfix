@@ -35,11 +35,15 @@ int main() {
     int ret2 =
         (RESET_ARENA(), starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon,
                                             NULL, 0, NULL, NULL, &scale, &bias, &arena, NULL));
+    starfix_odometry_t one_odom = {1.0, 0.0};
+    starfix_pose_t two_poses[2];
+    int ret3 = (RESET_ARENA(), starfix_solve_graph(1, 1, dt_sec, init_lat, init_lon, &one_odom, 1,
+                                                   NULL, two_poses, &scale, &bias, &arena, NULL));
 
-    if (ret1 < 0 && ret2 < 0) {
+    if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
     } else {
-        printf("FAILED (got %d, %d)\n", ret1, ret2);
+        printf("FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
     }
 
     /* 2. Happy Path Factor Graph Optimization */
@@ -65,7 +69,7 @@ int main() {
     int i;
     for (i = 0; i < total_steps; i++) {
         double current_heading = (i < total_steps / 2) ? 45.0 : 135.0;
-        odom[i].speed = true_speed / true_scale;
+        odom[i].speed = true_speed * true_scale;
         odom[i].heading = current_heading + 4.0; /* 4 degrees compass bias */
     }
 
@@ -130,6 +134,30 @@ int main() {
     } else {
         printf("FAILED (solver returned %d)\n", status);
     }
+
+    /* 3. Scratch storage must remain bounded as the graph grows. */
+    printf("Test 3: Bounded arena use for larger graph... ");
+    int large_nodes = 200;
+    starfix_odometry_t* large_odom =
+        (starfix_odometry_t*)calloc((size_t)large_nodes, sizeof(starfix_odometry_t));
+    starfix_pose_t* large_poses =
+        (starfix_pose_t*)malloc(((size_t)large_nodes + 1) * sizeof(starfix_pose_t));
+    double large_scale = 1.0;
+    double large_bias = 0.0;
+    int large_status = STARFIX_ERR_MEMORY;
+    if (large_odom != NULL && large_poses != NULL) {
+        large_status =
+            (RESET_ARENA(),
+             starfix_solve_graph(large_nodes, 1, dt_sec, init_lat, init_lon, large_odom, 0, NULL,
+                                 large_poses, &large_scale, &large_bias, &arena, NULL));
+    }
+    if (large_status == STARFIX_SUCCESS) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (status=%d)\n", large_status);
+    }
+    free(large_odom);
+    free(large_poses);
 
     free(odom);
     free(poses);

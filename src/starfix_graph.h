@@ -34,9 +34,9 @@ typedef struct {
    - num_fixes: number of celestial fixes
    - fixes: array of celestial fixes
    - poses: output array of optimized keyframe poses (size num_nodes + 1)
-   - est_scale: input/output pointer to speed log scale factor
+   - est_scale: input/output pointer to speed log scale factor (measured speed / true speed)
    - est_bias: input/output pointer to heading bias in radians
-   - returns: number of iterations on success, or a negative value on error */
+   - returns: STARFIX_SUCCESS or a negative error; iteration count is written to telem */
 starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec,
                                      double initial_lat, double initial_lon,
                                      const starfix_odometry_t* odom, int num_fixes,
