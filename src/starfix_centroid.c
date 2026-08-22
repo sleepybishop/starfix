@@ -1,5 +1,6 @@
 #include "starfix_centroid.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,7 +31,10 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
         return STARFIX_ERR_CENTROID_BUFFER_FULL;
     }
     if (width <= 0 || height <= 0 || max_centroids <= 0) {
-        return -3;
+        return STARFIX_ERR_INVALID_PARAM;
+    }
+    if ((size_t)width > SIZE_MAX / (size_t)height || width > INT_MAX / height) {
+        return STARFIX_ERR_INVALID_PARAM;
     }
     /* Note: visited_mask can be NULL if the user wants an unoptimized single-shot run */
     int count = 0;
@@ -41,9 +45,14 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
     int owns_visited = 0;
     if (visited == NULL) {
         visited = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
-        if (visited == NULL) return STARFIX_ERR_NULL_POINTER;
+        if (visited == NULL) return STARFIX_ERR_MEMORY;
         owns_visited = 1;
         frame_number = 1; /* first frame */
+    } else if (frame_number == 0) {
+        /* Generation zero collides with a zero-initialized mask. Clear on wrap and
+         * restart at generation one; this is paid only once per uint32_t cycle. */
+        memset(visited, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
+        frame_number = 1;
     }
 
     /* static buffers for the flood fill bfs queue to avoid dynamic allocation in loop */

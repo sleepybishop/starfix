@@ -170,6 +170,20 @@ int main() {
 
     free(dark_frame);
 
+    /* 6. Generation zero must work with a caller-owned zero-initialized mask. */
+    printf("Test 6: Generation-zero mask handling... ");
+    memset(image, 0, (size_t)width * (size_t)height);
+    image[60 * width + 60] = 255;
+    uint32_t* visited = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
+    starfix_status_t zero_status =
+        starfix_find_centroids(image, width, height, 35, 10, centroids, visited, 0, &telem);
+    if (zero_status == STARFIX_SUCCESS && telem.num_stars_detected == 1) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (status=%d, count=%u)\n", zero_status, telem.num_stars_detected);
+    }
+    free(visited);
+
     free(image);
     return 0;
 }

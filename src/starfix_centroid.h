@@ -1,7 +1,7 @@
-#include "starfix_status.h"
-
 #ifndef STARFIX_CENTROID_H
 #define STARFIX_CENTROID_H
+
+#include "starfix_status.h"
 
 /* starfix_centroid: C API for sub-pixel star centroiding. detects star blobs
    in a raw grayscale image buffer using a threshold and 8-connected flood fill,
@@ -22,7 +22,10 @@ typedef struct {
    - threshold: background subtraction intensity threshold
    - max_centroids: capacity of the output centroids array
    - centroids: output array to be populated with detected stars
-   - returns: number of centroids detected on success, or a negative value on error */
+   - visited_mask: optional width*height persistent generation mask
+   - frame_number: generation identifier; zero clears/restarts a persistent mask
+   - returns: STARFIX_SUCCESS or a negative error; the count is written to
+     telem->num_stars_detected */
 starfix_status_t starfix_find_centroids(const unsigned char* image, int width, int height,
                                         unsigned char threshold, int max_centroids,
                                         starfix_centroid_t* centroids, uint32_t* visited_mask,
