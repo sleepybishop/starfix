@@ -111,6 +111,9 @@ starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* z
     int result = nanoqsp_solve_least_squares(m, n, A, b, lb, ub, x_off, &config);
 
     if (result >= 0) {
+        if (fabs(x_off[0]) >= deg_to_rad(4.99) || fabs(x_off[1]) >= deg_to_rad(4.99)) {
+            return STARFIX_ERR_SOLVER_DIVERGENCE;
+        }
         /* output solved coordinates in degrees */
         *solved_lat = ap_lat + rad_to_deg(x_off[0]);
         *solved_lon = ap_lon + rad_to_deg(x_off[1]);
