@@ -273,9 +273,9 @@ starfix_status_t starfix_identify_stars(
         return STARFIX_ERR_INVALID_PARAM;
     }
 
-    /* 1. select up to 8 brightest centroids for LIS hashing */
-    int n_test = (num_centroids < 8) ? num_centroids : 8;
-    double cam_vecs[8][3];
+    /* Include enough detections to tolerate bright hot pixels, merged stars, and edge artifacts. */
+    int n_test = (num_centroids < 12) ? num_centroids : 12;
+    double cam_vecs[12][3];
     for (i = 0; i < n_test; i++) {
         cam_vecs[i][0] = all_cam_vecs[i][0];
         cam_vecs[i][1] = all_cam_vecs[i][1];
@@ -472,26 +472,33 @@ starfix_status_t starfix_identify_stars(
         }
     }
 
-    /* 4. extract final matched pairs based on vote thresholds */
+    /* 4. Extract a one-to-one assignment from the vote table. A catalog star and an image
+     * centroid may each appear at most once in a physically valid attitude solution. */
     int num_matches = 0;
-    for (i = 0; i < n_test; i++) {
-        int max_v = 0;
-        int best_cat_idx = -1;
-        for (j = 0; j < (int)num_stars; j++) {
-            if (votes[i][j] > max_v) {
-                max_v = votes[i][j];
-                best_cat_idx = j;
-            }
-        }
+    int centroid_used[12] = {0};
+    unsigned char* catalog_used = starfix_alloc_array(arena, unsigned char, (size_t)num_stars);
+    if (catalog_used == NULL) return STARFIX_ERR_MEMORY;
 
-        /* standard threshold: require at least 4 votes for verification */
-        if (max_v >= 4 && best_cat_idx >= 0) {
-            if (num_matches < max_matches) {
-                matches[num_matches].centroid_idx = i;
-                matches[num_matches].catalog_idx = best_cat_idx;
-                num_matches++;
+    while (num_matches < n_test && num_matches < max_matches) {
+        int best_votes = 3;
+        int best_centroid = -1;
+        int best_catalog = -1;
+        for (i = 0; i < n_test; i++) {
+            if (centroid_used[i]) continue;
+            for (j = 0; j < (int)num_stars; j++) {
+                if (!catalog_used[j] && votes[i][j] > best_votes) {
+                    best_votes = votes[i][j];
+                    best_centroid = i;
+                    best_catalog = j;
+                }
             }
         }
+        if (best_centroid < 0) break;
+        matches[num_matches].centroid_idx = best_centroid;
+        matches[num_matches].catalog_idx = best_catalog;
+        centroid_used[best_centroid] = 1;
+        catalog_used[best_catalog] = 1;
+        num_matches++;
     }
 
     if (telem) {

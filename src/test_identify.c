@@ -176,7 +176,18 @@ int main() {
                                                      20, out_matches, &arena, &telem, NULL));
 
     if (ret == STARFIX_SUCCESS && telem.identify_matches >= 3) {
-        printf("Passed\n");
+        int lis_unique = 1;
+        int unique_i, unique_j;
+        for (unique_i = 0; unique_i < (int)telem.identify_matches; unique_i++) {
+            for (unique_j = unique_i + 1; unique_j < (int)telem.identify_matches; unique_j++) {
+                if (out_matches[unique_i].centroid_idx == out_matches[unique_j].centroid_idx ||
+                    out_matches[unique_i].catalog_idx == out_matches[unique_j].catalog_idx) {
+                    lis_unique = 0;
+                }
+            }
+        }
+        printf(lis_unique ? "Passed\n" : "FAILED (lost-in-space matches were not unique)\n");
+        if (!lis_unique) return -1;
         printf("  Successfully matched %d stars in C!\n", (int)telem.identify_matches);
         int i;
         for (i = 0; i < (int)telem.identify_matches; i++) {
@@ -230,12 +241,15 @@ int main() {
                        (int)telem_track.identify_matches);
             } else {
                 printf("FAILED (tracking mode reused a centroid)\n");
+                return -1;
             }
         } else {
             printf("FAILED (tracking mode matched %d stars)\n", (int)telem_track.identify_matches);
+            return -1;
         }
     } else {
         printf("FAILED (matched only %d stars)\n", (int)telem.identify_matches);
+        return -1;
     }
 
     /* 4. Stellar Precession Propagation Check */
