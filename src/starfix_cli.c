@@ -741,7 +741,7 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
             double vz = R[2][0] * cel_vecs[i].x + R[2][1] * cel_vecs[i].y + R[2][2] * cel_vecs[i].z;
             if (vz > 0.0) {
                 double u_proj = crop_size / 2.0 + (vx / vz) * f_len;
-                double v_proj = crop_size / 2.0 - (vy / vz) * f_len;
+                double v_proj = crop_size / 2.0 + (vy / vz) * f_len;
                 double du = u_proj - centroids[c_idx].u;
                 double dv = v_proj - centroids[c_idx].v;
                 sum_sq_err += du * du + dv * dv;

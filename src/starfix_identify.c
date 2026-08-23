@@ -207,7 +207,7 @@ starfix_status_t starfix_identify_stars(
     double all_cam_vecs[20][3];
     for (i = 0; i < max_track_centroids; i++) {
         double cx = (centroids[i].u - width / 2.0) / focal_length;
-        double cy = -(centroids[i].v - height / 2.0) / focal_length;
+        double cy = (centroids[i].v - height / 2.0) / focal_length;
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
         all_cam_vecs[i][0] = cx / norm;

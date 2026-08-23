@@ -195,7 +195,7 @@ int main() {
             int cat_i = out_matches[i].catalog_idx;
             double f_len = 1024.0 / (2.0 * tan((12.0 * M_PI / 180.0) / 2.0));
             double cx = (centroids[c_i].u - 512.0) / f_len;
-            double cy = -(centroids[c_i].v - 512.0) / f_len;
+            double cy = (centroids[c_i].v - 512.0) / f_len;
             double norm = sqrt(cx * cx + cy * cy + 1.0);
             w_vecs[i].x = cx / norm;
             w_vecs[i].y = cy / norm;
