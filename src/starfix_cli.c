@@ -309,7 +309,7 @@ static int read_attitude_json_R(const char* path, double R[3][3]) {
 }
 
 /* actions */
-static int do_centroid() {
+static int do_centroid(int threshold) {
     printf("Loading image from data/mock_image.pgm...\n");
     int w = 0, h = 0;
     unsigned char* img = read_pgm("data/mock_image.pgm", &w, &h);
@@ -321,7 +321,7 @@ static int do_centroid() {
     starfix_centroid_t centroids[200];
     starfix_telemetry_t telem = {0};
     starfix_status_t count_status =
-        starfix_find_centroids(img, w, h, 35, 200, centroids, NULL, 1, &telem);
+        starfix_find_centroids(img, w, h, (unsigned char)threshold, 200, centroids, NULL, 1, &telem);
     int count = (int)telem.num_stars_detected;
     free(img);
 
@@ -335,7 +335,7 @@ static int do_centroid() {
     return 0;
 }
 
-static int do_identify(int width, int height, double fov_deg) {
+static int do_identify(int width, int height, double fov_deg, double observation_year) {
     starfix_catalog_star_t* catalog = NULL;
     starfix_hash_entry_t* hash_table = NULL;
     uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
@@ -350,12 +350,8 @@ static int do_identify(int width, int height, double fov_deg) {
         }
     }
 
-    /* calculate current year dynamically and propagate stellar precession */
-    time_t t_now = time(NULL);
-    struct tm* tm_now = gmtime(&t_now);
-    double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
-    printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_astrometry(catalog, num_stars, current_year, NULL);
+    printf("Propagating catalog precession to year %.2f...\n", observation_year);
+    starfix_propagate_astrometry(catalog, num_stars, observation_year, NULL);
 
     starfix_centroid_t centroids[100];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 100);
@@ -980,7 +976,8 @@ int main(int argc, char** argv) {
         printf("Usage: %s [option]\n", argv[0]);
         printf("Options:\n");
         printf("  --centroid       Extract sub-pixel star centroids from raw PGM image\n");
-        printf("  --identify       Match detected centroids to database catalog quads\n");
+        printf("  --identify [width height fov observation_year]\n");
+        printf("                   Match detected centroids to database catalog quads\n");
         printf("  --estimate-pose  Estimate camera attitude pointing matrix R\n");
         printf("  --solve-fix      Solve absolute absolute Latitude/Longitude position fix\n");
         printf(
@@ -993,12 +990,22 @@ int main(int argc, char** argv) {
     }
 
     if (strcmp(argv[1], "--centroid") == 0) {
-        return do_centroid();
+        int threshold = (argc >= 3) ? atoi(argv[2]) : 35;
+        return do_centroid(threshold);
     } else if (strcmp(argv[1], "--identify") == 0) {
         int w = (argc >= 3) ? atoi(argv[2]) : 1024;
         int h = (argc >= 4) ? atoi(argv[3]) : 1024;
         double fov = (argc >= 5) ? atof(argv[4]) : 12.0;
-        return do_identify(w, h, fov);
+        double observation_year;
+        if (argc >= 6) {
+            observation_year = atof(argv[5]);
+        } else {
+            time_t now = time(NULL);
+            struct tm* now_utc = gmtime(&now);
+            if (now_utc == NULL) return 1;
+            observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
+        }
+        return do_identify(w, h, fov, observation_year);
     } else if (strcmp(argv[1], "--estimate-pose") == 0) {
         return do_estimate_pose();
     } else if (strcmp(argv[1], "--solve-fix") == 0) {
@@ -1034,8 +1041,12 @@ int main(int argc, char** argv) {
         return do_fuse_graph();
     } else if (strcmp(argv[1], "--pipeline") == 0) {
         printf("Starting Native C End-to-End StarFix Pipeline...\n");
-        if (do_centroid() != 0) return 1;
-        if (do_identify(1024, 1024, 12.0) != 0) return 1;
+        if (do_centroid(35) != 0) return 1;
+        time_t now = time(NULL);
+        struct tm* now_utc = gmtime(&now);
+        if (now_utc == NULL) return 1;
+        double observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
+        if (do_identify(1024, 1024, 12.0, observation_year) != 0) return 1;
         if (do_estimate_pose() != 0) return 1;
         if (do_solve_fix() != 0) return 1;
         printf("\nPipeline execution completed successfully!\n");
