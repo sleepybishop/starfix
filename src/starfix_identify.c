@@ -14,6 +14,7 @@
 #endif
 
 #include "starfix_astrometry.h"
+#include "starfix_attitude.h"
 
 /* helper to compress 5D hash code into a single 30-bit integer */
 static uint32_t compress_hash_key(const int* code) {
@@ -182,6 +183,66 @@ static void sort_angles(double* angles, int* indices, int n) {
     }
 }
 
+/* Validate a hash seed with a proper rotation and unique additional catalog matches.
+ * At most 20 observations are passed by the caller; scratch storage stays on the stack. */
+static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_t v_seed[4],
+                       int num_observed, const double observed[][3], uint32_t num_stars,
+                       const starfix_vector3_t* catalog_vectors, double verify_cos,
+                       double field_cos, starfix_match_t verified[20], double* error) {
+    int i, j, seed;
+    double R[3][3];
+    starfix_quaternion_t q;
+    if (starfix_solve_attitude(4, w_seed, v_seed, &q, R) != STARFIX_SUCCESS) return 0;
+    /* Distances alone also match mirrored patterns. A proper
+     * rotation must explain every seed before searching further. */
+    int seed_valid = 1;
+    for (seed = 0; seed < 4; seed++) {
+        starfix_vector3_t v = v_seed[seed], w = w_seed[seed];
+        double dot = w.x * (R[0][0] * v.x + R[0][1] * v.y + R[0][2] * v.z) +
+                     w.y * (R[1][0] * v.x + R[1][1] * v.y + R[1][2] * v.z) +
+                     w.z * (R[2][0] * v.x + R[2][1] * v.y + R[2][2] * v.z);
+        if (dot < verify_cos) seed_valid = 0;
+    }
+    if (!seed_valid) return 0;
+    int nearest[20];
+    double nearest_dot[20];
+    for (i = 0; i < num_observed; i++) {
+        nearest[i] = -1;
+        nearest_dot[i] = verify_cos;
+    }
+    for (j = 0; j < (int)num_stars; j++) {
+        starfix_vector3_t v = catalog_vectors[j];
+        double z = R[2][0] * v.x + R[2][1] * v.y + R[2][2] * v.z;
+        if (z < field_cos) continue;
+        double x = R[0][0] * v.x + R[0][1] * v.y + R[0][2] * v.z;
+        double y = R[1][0] * v.x + R[1][1] * v.y + R[1][2] * v.z;
+        for (i = 0; i < num_observed; i++) {
+            double dot = x * observed[i][0] + y * observed[i][1] + z * observed[i][2];
+            if (dot > nearest_dot[i]) {
+                nearest_dot[i] = dot;
+                nearest[i] = j;
+            }
+        }
+    }
+    int count = 0;
+    *error = 0.0;
+    for (i = 0; i < num_observed; i++) {
+        if (nearest[i] < 0) continue;
+        int duplicate = 0;
+        for (j = 0; j < num_observed; j++) {
+            if (j != i && nearest[j] == nearest[i] &&
+                (nearest_dot[j] > nearest_dot[i] || (nearest_dot[j] >= nearest_dot[i] && j < i))) {
+                duplicate = 1;
+                break;
+            }
+        }
+        if (duplicate) continue;
+        verified[count++] = (starfix_match_t){i, nearest[i]};
+        *error += 1.0 - nearest_dot[i];
+    }
+    return count;
+}
+
 starfix_status_t starfix_identify_stars(
     int num_centroids, const starfix_centroid_t* centroids, double width, double height,
     double fov_deg, uint32_t num_stars, const starfix_catalog_star_t* catalog_stars,
@@ -282,15 +343,21 @@ starfix_status_t starfix_identify_stars(
         cam_vecs[i][2] = all_cam_vecs[i][2];
     }
 
-    /* 2. allocate voting table (size: n_test x num_stars) */
-    int** votes = starfix_alloc_array(arena, int*, (size_t)n_test);
-    if (votes == NULL) return STARFIX_ERR_MEMORY;
-    for (i = 0; i < n_test; i++) {
-        votes[i] = starfix_alloc_array(arena, int, (size_t)num_stars);
-        if (votes[i] == NULL) {
-            return STARFIX_ERR_MEMORY;
-        }
+    /* The compact database may contain only one visible quad. Validate each seed
+     * against additional image stars instead of requiring repeated quad votes. */
+    starfix_vector3_t* catalog_vectors = starfix_alloc_array(arena, starfix_vector3_t, num_stars);
+    if (catalog_vectors == NULL) return STARFIX_ERR_MEMORY;
+    for (j = 0; j < (int)num_stars; j++) {
+        double ra = starfix_catalog_ra(&catalog_stars[j]);
+        double dec = starfix_catalog_dec(&catalog_stars[j]);
+        catalog_vectors[j] = (starfix_vector3_t){cos(dec) * cos(ra), cos(dec) * sin(ra), sin(dec)};
     }
+    int best_count = 0;
+    double best_error = HUGE_VAL;
+    starfix_match_t best_matches[20];
+    double verify_cos = cos(0.12 * M_PI / 180.0);
+    double corner_angle = atan(hypot(width, height) / (2.0 * focal_length));
+    double field_cos = cos(corner_angle + 0.5 * M_PI / 180.0);
 
     /* all 24 permutations of matching [0, 1, 2, 3] camera stars to catalog stars */
     static const int perms[24][4] = {
@@ -453,14 +520,28 @@ starfix_status_t starfix_identify_stars(
                                 }
 
                                 if (valid) {
-                                    /* permutation matched! vote for the matched pairs */
-                                    int match_i;
-                                    for (match_i = 0; match_i < 4; match_i++) {
-                                        int centroid_idx = quad_idx[match_i];
-                                        int catalog_idx = cand->stars[perms[p][match_i]];
-                                        if (catalog_idx >= 0 && (uint32_t)catalog_idx < num_stars) {
-                                            votes[centroid_idx][catalog_idx]++;
-                                        }
+                                    starfix_vector3_t w_seed[4], v_seed[4];
+                                    int seed;
+                                    for (seed = 0; seed < 4; seed++) {
+                                        int ci = quad_idx[seed];
+                                        w_seed[seed] = (starfix_vector3_t){
+                                            cam_vecs[ci][0], cam_vecs[ci][1], cam_vecs[ci][2]};
+                                        v_seed[seed] = catalog_vectors[cand->stars[perms[p][seed]]];
+                                    }
+                                    starfix_match_t verified[20];
+                                    double error;
+                                    int count = verify_quad(w_seed, v_seed, max_track_centroids,
+                                                            (const double (*)[3])all_cam_vecs,
+                                                            num_stars, catalog_vectors, verify_cos,
+                                                            field_cos, verified, &error);
+                                    /* Require an independent fifth star to validate a quad. */
+                                    if (count >= 5 &&
+                                        (count > best_count ||
+                                         (count == best_count && error < best_error))) {
+                                        best_count = count;
+                                        best_error = error;
+                                        memcpy(best_matches, verified,
+                                               (size_t)count * sizeof(*verified));
                                     }
                                 }
                             }
@@ -472,38 +553,9 @@ starfix_status_t starfix_identify_stars(
         }
     }
 
-    /* 4. Extract a one-to-one assignment from the vote table. A catalog star and an image
-     * centroid may each appear at most once in a physically valid attitude solution. */
-    int num_matches = 0;
-    int centroid_used[12] = {0};
-    unsigned char* catalog_used = starfix_alloc_array(arena, unsigned char, (size_t)num_stars);
-    if (catalog_used == NULL) return STARFIX_ERR_MEMORY;
-
-    while (num_matches < n_test && num_matches < max_matches) {
-        int best_votes = 3;
-        int best_centroid = -1;
-        int best_catalog = -1;
-        for (i = 0; i < n_test; i++) {
-            if (centroid_used[i]) continue;
-            for (j = 0; j < (int)num_stars; j++) {
-                if (!catalog_used[j] && votes[i][j] > best_votes) {
-                    best_votes = votes[i][j];
-                    best_centroid = i;
-                    best_catalog = j;
-                }
-            }
-        }
-        if (best_centroid < 0) break;
-        matches[num_matches].centroid_idx = best_centroid;
-        matches[num_matches].catalog_idx = best_catalog;
-        centroid_used[best_centroid] = 1;
-        catalog_used[best_catalog] = 1;
-        num_matches++;
-    }
-
-    if (telem) {
-        telem->identify_matches = (uint32_t)num_matches;
-    }
+    int num_matches = (best_count < max_matches) ? best_count : max_matches;
+    if (num_matches > 0) memcpy(matches, best_matches, (size_t)num_matches * sizeof(*matches));
+    if (telem) telem->identify_matches = (uint32_t)num_matches;
     return (num_matches >= 3) ? STARFIX_SUCCESS : STARFIX_ERR_IDENTIFY_NO_MATCH;
 }
 

@@ -77,7 +77,7 @@ int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_s
    - width: sensor width in pixels
    - height: sensor height in pixels
    - fov_deg: camera field-of-view in degrees
-   - image v coordinates increase downward; attitude_hint uses camera +Y upward
+   - camera frame is right-handed: +X image right, +Y image down, +Z forward
    - num_stars: number of stars in database catalog
    - catalog_stars: star catalog array
    - num_entries: number of database hash entries
@@ -85,6 +85,8 @@ int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_s
    - bin_factor: database bin factor
    - max_matches: maximum number of matches to output
    - matches: output array of matched pairs
+   - blind mode validates a four-star seed with at least one additional star;
+     tracking mode can use three matches with the supplied attitude hint
    - returns: STARFIX_SUCCESS when at least three stars are identified, or a negative error;
      the exact match count is written to telem->identify_matches */
 starfix_status_t starfix_identify_stars(
