@@ -61,9 +61,8 @@ use Test::More;
 
 # Test 6: Star Identification (TETRA Pattern Matching)
 {
-    if (! -f 'data/mock_centroids.json') {
-        system("perl scripts/simulate_camera.pl >/dev/null 2>&1");
-    }
+    system("perl scripts/simulate_camera.pl >/dev/null 2>&1");
+    ok($? == 0, "Camera fixture regenerated using the current projection convention");
     my $output = `./t/test_identify 2>&1`;
     ok($? == 0 && $output !~ /FAILED/, "Star ID test runner executed without hidden failures");
     

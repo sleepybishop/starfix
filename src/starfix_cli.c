@@ -462,7 +462,7 @@ static int do_estimate_pose() {
 
         /* camera vector */
         double cx = (centroids[c_idx].u - 512.0) / focal_length;
-        double cy = -(centroids[c_idx].v - 512.0) / focal_length;
+        double cy = (centroids[c_idx].v - 512.0) / focal_length;
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
         cam_vectors[i].x = cx / norm;
@@ -699,7 +699,7 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
 
         /* convert centroids to camera frame unit vectors */
         double cx = (centroids[c_idx].u - crop_size / 2.0) / f_len;
-        double cy = -(centroids[c_idx].v - crop_size / 2.0) / f_len;
+        double cy = (centroids[c_idx].v - crop_size / 2.0) / f_len;
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
         cam_vecs[i].x = cx / norm;

@@ -177,7 +177,7 @@ sub main {
             my $y_sensor = $y_c / $z_c;
             
             my $u = $width / 2.0 + $focal_length * $x_sensor;
-            my $v = $height / 2.0 - $focal_length * $y_sensor;
+            my $v = $height / 2.0 + $focal_length * $y_sensor;
             
             if ($u >= 0 && $u < $width && $v >= 0 && $v < $height) {
                 push @visible_stars, {

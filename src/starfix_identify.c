@@ -211,8 +211,8 @@ starfix_status_t starfix_identify_stars(
         double cz = 1.0;
         double norm = sqrt(cx * cx + cy * cy + cz * cz);
         all_cam_vecs[i][0] = cx / norm;
-        /* Image rows increase downward; camera-frame +Y increases upward. */
-        all_cam_vecs[i][1] = -cy / norm;
+        /* Right-handed camera frame: +X right, +Y down, +Z into the scene. */
+        all_cam_vecs[i][1] = cy / norm;
         all_cam_vecs[i][2] = cz / norm;
     }
 

@@ -126,7 +126,7 @@ int main(void) {
             int cat_idx = matches[i].catalog_idx;
 
             double cx = (centroids[c_idx].u - CAM_WIDTH / 2.0) / focal_length;
-            double cy = -(centroids[c_idx].v - CAM_HEIGHT / 2.0) / focal_length;
+            double cy = (centroids[c_idx].v - CAM_HEIGHT / 2.0) / focal_length;
             double norm = sqrt(cx * cx + cy * cy + 1.0);
             cam_vecs[i].x = cx / norm;
             cam_vecs[i].y = cy / norm;

@@ -15,7 +15,7 @@ typedef struct {
 
 /* solves Wahba's problem to find optimal orientation:
    - num_stars: number of paired star vectors (must be >= 2)
-   - w: camera frame unit vectors
+   - w: right-handed camera unit vectors (+X image right, +Y image down, +Z forward)
    - v: celestial catalog frame unit vectors
    - q_est: output optimal quaternion
    - R_est: output optimal 3x3 rotation matrix (projects catalog to camera)
