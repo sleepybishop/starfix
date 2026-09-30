@@ -163,6 +163,24 @@ class PhotoTests(unittest.TestCase):
             result = common.solve_plate(path, exif, str(ROOT / "starfix_cli"), directory, utc)
             self.assertEqual(result["crop_size"], 840)
             self.assertEqual(path.read_bytes(), original)
+            # Exercise the public photo command with no GPS or initial position.
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "demo_photo/solve_photo.py"),
+                 "--zenith", "0", "0", "1", str(path)],
+                cwd=ROOT, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            position = {}
+            for line in result.stdout.splitlines():
+                if "Solved Latitude" in line:
+                    position["lat"] = float(line.split(":")[1].split()[0])
+                if "Solved Longitude" in line:
+                    position["lon"] = float(line.split(":")[1].split()[0])
+            expected_lat, expected_lon = case["reference_center_lat_lon"]
+            self.assertAlmostEqual(position["lat"], expected_lat, delta=0.08)
+            self.assertAlmostEqual(position["lon"], expected_lon, delta=0.08)
+            self.assertTrue(path.with_name("sparse_overlay.jpg").is_file())
+            self.assertEqual(path.read_bytes(), original)
 
 
 if __name__ == "__main__":

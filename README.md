@@ -42,10 +42,11 @@ the location demonstrates consistency, not independent geolocation accuracy.
 
 To calculate a position using an independently measured camera zenith:
 ```bash
-python3 demo_photo/solve_photo.py --latitude 63.8 --longitude -18.0 --zenith 0 0 1 photo.jpg
+python3 demo_photo/solve_photo.py --zenith 0 0 1 photo.jpg
 ```
-The supplied position is an approximate starting point; the position solver uses
-a local linear correction limited to ±5 degrees. Coordinates override EXIF GPS.
+The position is computed directly from the star attitude, camera zenith, and UTC
+time. No initial position or EXIF GPS is required. Longitude is wrapped to
+[-180°, 180°); at an exact pole its undefined value is reported as zero.
 With no tilt metadata or `--zenith`, the tool explicitly assumes the image center
 points straight up. The timestamp must include a UTC offset, or
 `STARFIX_UTC_OFFSET_HOURS` must be set.

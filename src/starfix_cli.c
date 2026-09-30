@@ -535,9 +535,6 @@ static int do_solve_fix() {
     double true_lat = 37.7749;
     double true_lon = -122.4194;
 
-    /* assumed position (AP) */
-    double ap_lat = 37.5;
-    double ap_lon = -122.0;
     double gha_aries = 202.4194;
 
     /* generate 50 mock Zenith vectors in camera frame using true position */
@@ -582,8 +579,8 @@ static int do_solve_fix() {
     starfix_telemetry_t telem = {0};
     RESET_ARENA();
     starfix_status_t status =
-        starfix_solve_position(50, zenith_cam_meas, (const double (*)[3])R, gha_aries_arr, ap_lat,
-                               ap_lon, &solved_lat, &solved_lon, &arena, &telem);
+        starfix_solve_position(50, zenith_cam_meas, (const double (*)[3])R, gha_aries_arr,
+                               &solved_lat, &solved_lon, &telem);
 
     if (status != STARFIX_SUCCESS) {
         printf("Position fix solver failed.\n");
@@ -608,10 +605,10 @@ static int do_solve_fix() {
 
     printf("\nCelestial Position Fix Results:\n");
     printf("-----------------------------------------------------------------\n");
-    printf("Parameter          | AP (deg)   | Solved (deg) | True (deg)\n");
+    printf("Parameter          | Solved (deg) | True (deg)\n");
     printf("-----------------------------------------------------------------\n");
-    printf("Latitude           |   %8.4f |     %8.4f |   %8.4f\n", ap_lat, solved_lat, true_lat);
-    printf("Longitude          |  %9.4f |    %9.4f |  %9.4f\n", ap_lon, solved_lon, true_lon);
+    printf("Latitude           |     %8.4f |   %8.4f\n", solved_lat, true_lat);
+    printf("Longitude          |    %9.4f |  %9.4f\n", solved_lon, true_lon);
     printf("-----------------------------------------------------------------\n");
     printf("Position Solver Error: %.4f Nautical Miles (nm)\n", dist_err_nm);
     printf("-----------------------------------------------------------------\n");
@@ -620,13 +617,10 @@ static int do_solve_fix() {
     return 0;
 }
 
-static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, double ap_lat,
-                          double ap_lon, double fov_deg, double observation_year, int attitude_only,
-                          double crop_size) {
-    if (!isfinite(gha_aries) || !isfinite(ap_lat) || !isfinite(ap_lon) || !isfinite(fov_deg) ||
-        !isfinite(observation_year) || ap_lat < -90.0 || ap_lat > 90.0 || ap_lon < -180.0 ||
-        ap_lon > 180.0 || fov_deg <= 0.0 || fov_deg >= 180.0 || !isfinite(crop_size) ||
-        crop_size <= 0.0) {
+static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, double fov_deg,
+                          double observation_year, int attitude_only, double crop_size) {
+    if (!isfinite(gha_aries) || !isfinite(fov_deg) || !isfinite(observation_year) ||
+        fov_deg <= 0.0 || fov_deg >= 180.0 || !isfinite(crop_size) || crop_size <= 0.0) {
         printf("Invalid photo attitude parameters.\n");
         return 1;
     }
@@ -831,9 +825,8 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
 
     RESET_ARENA();
     starfix_telemetry_t telem = {0};
-    starfix_status_t solve_status =
-        starfix_solve_position(1, zenith_meas, (const double (*)[3])R, &gha_aries, ap_lat, ap_lon,
-                               &solved_lat, &solved_lon, &arena, &telem);
+    starfix_status_t solve_status = starfix_solve_position(
+        1, zenith_meas, (const double (*)[3])R, &gha_aries, &solved_lat, &solved_lon, &telem);
 
     if (solve_status == STARFIX_SUCCESS) {
         printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
@@ -1034,7 +1027,7 @@ int main(int argc, char** argv) {
         printf("  --solve-fix      Solve absolute absolute Latitude/Longitude position fix\n");
         printf(
             "  --solve-photo    Solve terrestrial position from a real photo (uses: <gha_aries> "
-            "<g_x> <g_y> <g_z> <ap_lat> <ap_lon> [fov_deg] [observation_year] [crop_size])\n");
+            "<g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size])\n");
         printf("  --fuse-ekf       Run real-time EKF trajectory fusion simulation\n");
         printf("  --fuse-graph     Run Factor Graph batch trajectory smoother simulation\n");
         printf("  --pipeline       Run the entire end-to-end star tracker pipeline natively\n");
@@ -1063,9 +1056,9 @@ int main(int argc, char** argv) {
     } else if (strcmp(argv[1], "--solve-fix") == 0) {
         return do_solve_fix();
     } else if (strcmp(argv[1], "--solve-photo") == 0) {
-        if (argc < 8) {
+        if (argc < 6 || argc > 9) {
             printf(
-                "Usage: %s --solve-photo <gha_aries> <g_x> <g_y> <g_z> <ap_lat> <ap_lon> "
+                "Usage: %s --solve-photo <gha_aries> <g_x> <g_y> <g_z> "
                 "[fov_deg] [observation_year] [crop_size]\n",
                 argv[0]);
             return 1;
@@ -1074,20 +1067,18 @@ int main(int argc, char** argv) {
         double gx = atof(argv[3]);
         double gy = atof(argv[4]);
         double gz = atof(argv[5]);
-        double lat = atof(argv[6]);
-        double lon = atof(argv[7]);
-        double fov_deg = (argc >= 9) ? atof(argv[8]) : 11.28;
+        double fov_deg = (argc >= 7) ? atof(argv[6]) : 11.28;
         double observation_year;
-        if (argc >= 10) {
-            observation_year = atof(argv[9]);
+        if (argc >= 8) {
+            observation_year = atof(argv[7]);
         } else {
             time_t now = time(NULL);
             struct tm* now_utc = gmtime(&now);
             if (now_utc == NULL) return 1;
             observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
         }
-        double crop_size = (argc >= 11) ? atof(argv[10]) : 560.0;
-        return do_solve_photo(gha, gx, gy, gz, lat, lon, fov_deg, observation_year, 0, crop_size);
+        double crop_size = (argc >= 9) ? atof(argv[8]) : 560.0;
+        return do_solve_photo(gha, gx, gy, gz, fov_deg, observation_year, 0, crop_size);
     } else if (strcmp(argv[1], "--fit-photo") == 0) {
         if (argc < 5) {
             printf(
@@ -1108,7 +1099,7 @@ int main(int argc, char** argv) {
             observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
         }
         double crop_size = (argc >= 8) ? atof(argv[7]) : 560.0;
-        return do_solve_photo(0.0, gx, gy, gz, 0.0, 0.0, fov_deg, observation_year, 1, crop_size);
+        return do_solve_photo(0.0, gx, gy, gz, fov_deg, observation_year, 1, crop_size);
     } else if (strcmp(argv[1], "--fuse-ekf") == 0) {
         return do_fuse_ekf();
     } else if (strcmp(argv[1], "--fuse-graph") == 0) {

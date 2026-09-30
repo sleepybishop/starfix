@@ -156,8 +156,8 @@ int main(void) {
         double gha_aries = 100.0; /* Mock value for prototype */
         RESET_ARENA();
         starfix_status_t pos_stat =
-            starfix_solve_position(1, &imu_zenith, R_est, &gha_aries, ekf.lat, ekf.lon, &solved_lat,
-                                   &solved_lon, &arena, &telem);
+            starfix_solve_position(1, &imu_zenith, R_est, &gha_aries, &solved_lat,
+                                   &solved_lon, &telem);
 
         if (pos_stat == STARFIX_SUCCESS) {
             starfix_ekf_correct(&ekf, solved_lat, solved_lon, &telem);

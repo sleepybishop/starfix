@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Solve a photo using a measured camera zenith and an approximate position."""
+"""Solve a photo using a measured camera zenith and UTC time."""
 
 import argparse
 import glob
@@ -40,15 +40,9 @@ def get_camera_zenith(tilts):
     return g_x, g_y, math.sqrt(max(0.0, g_z_sq))
 
 
-def solve_photo_overlay(image_path, known_position=None, zenith_camera=None):
+def solve_photo_overlay(image_path, zenith_camera=None):
     image_path = os.path.abspath(image_path)
     exif_dict = piexif.load(image_path)
-    latitude, longitude = known_position or photo_common.get_exif_gps(exif_dict["GPS"])
-    if latitude is None or longitude is None:
-        raise ValueError("no EXIF GPS; provide an approximate --latitude and --longitude")
-    if (not math.isfinite(latitude) or not math.isfinite(longitude)
-            or not -90 < latitude < 90 or not -180 <= longitude <= 180):
-        raise ValueError("invalid approximate latitude/longitude")
     utc_dt = photo_common.parse_exif_utc(exif_dict)
     _, gha_aries = photo_common.calculate_gha_aries(utc_dt)
     metadata = photo_common.get_user_comment(exif_dict["Exif"]) or {}
@@ -66,7 +60,7 @@ def solve_photo_overlay(image_path, known_position=None, zenith_camera=None):
                                      utc_dt, zenith_camera=zenith)
         command = [cli_bin, "--solve-photo", f"{gha_aries:.9f}",
                    *(f"{component:.12f}" for component in zenith),
-                   f"{latitude:.9f}", f"{longitude:.9f}", f"{plate['fov_deg']:.9f}",
+                   f"{plate['fov_deg']:.9f}",
                    f"{photo_common.decimal_year(utc_dt):.9f}", str(plate["crop_size"])]
         result = photo_common.run_command(command, work_dir)
         solution = photo_common.parse_solver_output(result)
@@ -122,14 +116,9 @@ def solve_photo_overlay(image_path, known_position=None, zenith_camera=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("images", nargs="*")
-    parser.add_argument("--latitude", type=float, help="approximate latitude, overriding EXIF GPS")
-    parser.add_argument("--longitude", type=float, help="approximate longitude, overriding EXIF GPS")
     parser.add_argument("--zenith", type=float, nargs=3, metavar=("X", "Y", "Z"),
                         help="measured unit zenith vector: +X right, +Y down, +Z forward")
     arguments = parser.parse_args(argv)
-    if (arguments.latitude is None) != (arguments.longitude is None):
-        parser.error("--latitude and --longitude must be provided together")
-    position = None if arguments.latitude is None else (arguments.latitude, arguments.longitude)
     search_dir = "demo_photo" if os.path.isdir("demo_photo") else "."
     images = arguments.images or [path for path in sorted(glob.glob(os.path.join(search_dir, "*.jpg")))
                                   if not path.endswith("_overlay.jpg")]
@@ -138,7 +127,7 @@ def main(argv=None):
     failed = 0
     for path in images:
         try:
-            solve_photo_overlay(path, known_position=position, zenith_camera=arguments.zenith)
+            solve_photo_overlay(path, zenith_camera=arguments.zenith)
         except (OSError, ValueError, RuntimeError) as error:
             print(f"Failed {path}: {error}", file=sys.stderr)
             failed += 1

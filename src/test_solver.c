@@ -1,106 +1,90 @@
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
-
-#include "starfix_arena.h"
-#include "starfix_status.h"
-
-static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena;
-#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
 
 #include "starfix_solver.h"
-
-/* test runner to verify the C position solver under multiple conditions */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-int main() {
-    printf("--- Running Position Solver Comprehensive Tests ---\n");
+/* A nontrivial proper rotation: celestial (x,y,z) -> camera (z,x,y). */
+static const double R[3][3] = {{0, 0, 1}, {1, 0, 0}, {0, 1, 0}};
+static int failures = 0;
 
-    const double R_dummy[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-    double gha_dummy = 120.0;
-    double solved_lat = 0.0, solved_lon = 0.0;
+static starfix_vector3_t observe(double lat, double lon, double gha, double scale) {
+    double dec = lat * M_PI / 180.0;
+    double ra = (lon + gha) * M_PI / 180.0;
+    return (starfix_vector3_t){scale * sin(dec), scale * cos(dec) * cos(ra),
+                               scale * cos(dec) * sin(ra)};
+}
 
-    /* 1. Invalid Arguments & NULL Pointer Robustness */
-    printf("Test 1: Argument validation... ");
-    int ret1 = (RESET_ARENA(), starfix_solve_position(0, NULL, R_dummy, &gha_dummy, 34.0, -118.0,
-                                                      &solved_lat, &solved_lon, &arena, NULL));
-    int ret2 = (RESET_ARENA(), starfix_solve_position(1, NULL, R_dummy, &gha_dummy, 34.0, -118.0,
-                                                      &solved_lat, &solved_lon, &arena, NULL));
-    starfix_vector3_t zenith_dummy = {0.0, 0.0, 1.0};
-    int ret3 =
-        (RESET_ARENA(), starfix_solve_position(1, &zenith_dummy, NULL, &gha_dummy, 34.0, -118.0,
-                                               &solved_lat, &solved_lon, &arena, NULL));
+static void report(const char* name, int passed) {
+    printf("%s... %s\n", name, passed ? "Passed" : "FAILED");
+    if (!passed) failures++;
+}
 
-    if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
-        printf("Passed\n");
-    } else {
-        printf("FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
+static int check_fix(double lat, double lon, double gha) {
+    starfix_vector3_t w = observe(lat, lon, gha, 3.0);
+    double actual_lat, actual_lon;
+    starfix_telemetry_t telem = {.solver_iterations = 999};
+    int status = starfix_solve_position(1, &w, R, &gha, &actual_lat, &actual_lon, &telem);
+    return status == STARFIX_SUCCESS && fabs(actual_lat - lat) < 1e-9 &&
+           fabs(remainder(actual_lon - lon, 360.0)) < 1e-9 && actual_lon >= -180.0 &&
+           actual_lon < 180.0 && telem.solver_iterations == 0;
+}
+
+int main(void) {
+    double lat = 12.0, lon = 34.0, gha = 120.0;
+    starfix_vector3_t valid = observe(34.0522, -118.2437, gha, 1.0);
+    starfix_vector3_t zero = {0, 0, 0};
+    starfix_vector3_t invalid = {NAN, 0, 1};
+    double invalid_gha = INFINITY;
+    int valid_errors = starfix_solve_position(0, &valid, R, &gha, &lat, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, NULL, R, &gha, &lat, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, &valid, NULL, &gha, &lat, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, &valid, R, NULL, &lat, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, &valid, R, &gha, NULL, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, &zero, R, &gha, &lat, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, &invalid, R, &gha, &lat, &lon, NULL) < 0 &&
+                       starfix_solve_position(1, &valid, R, &invalid_gha, &lat, &lon, NULL) < 0;
+    report("Test 1: Argument validation",
+           valid_errors && fabs(lat - 12.0) < 1e-12 && fabs(lon - 34.0) < 1e-12);
+    report("Test 2: Happy path position fix solver", check_fix(34.0522, -118.2437, 120));
+
+    int global_ok = 1;
+    const double latitudes[] = {-89.999, -63.78, -20, 0, 34.05, 63.78402778, 89.999};
+    const double longitudes[] = {-180, -179.999, -118.2437, -18.01597222, 0, 90, 179.999, 180};
+    const double times[] = {-720.5, 0, 120, 357.826258, 1080.25};
+    for (unsigned int i = 0; i < sizeof(latitudes) / sizeof(latitudes[0]); i++)
+        for (unsigned int j = 0; j < sizeof(longitudes) / sizeof(longitudes[0]); j++)
+            for (unsigned int k = 0; k < sizeof(times) / sizeof(times[0]); k++)
+                global_ok &= check_fix(latitudes[i], longitudes[j], times[k]);
+    report("Test 3: Global fixes and longitude wrapping", global_ok);
+
+    double times_multi[3] = {359, 0, 90};
+    starfix_vector3_t measurements[3];
+    for (int i = 0; i < 3; i++)
+        measurements[i] = observe(-35, 179.95, times_multi[i], (double)i + 1);
+    int status = starfix_solve_position(3, measurements, R, times_multi, &lat, &lon, NULL);
+    report("Test 4: Average time-aligned Earth-fixed directions",
+           status == 0 && fabs(lat + 35) < 1e-9 && fabs(lon - 179.95) < 1e-9);
+    double pair_times[2] = {0, 0};
+    starfix_vector3_t pair[2] = {observe(0, 179.9, 0, 1), observe(0, -179.9, 0, 1)};
+    status = starfix_solve_position(2, pair, R, pair_times, &lat, &lon, NULL);
+    report("Test 5: Average across antimeridian",
+           status == 0 && fabs(lat) < 1e-9 && fabs(fabs(lon) - 180) < 1e-9);
+
+    int poles_ok = 1;
+    for (int sign = -1; sign <= 1; sign += 2) {
+        starfix_vector3_t pole = {(double)sign, 0, 0};
+        status = starfix_solve_position(1, &pole, R, &gha, &lat, &lon, NULL);
+        poles_ok &= status == 0 && fabs(lat - 90 * sign) < 1e-9 && fabs(lon) < 1e-9;
     }
-
-    /* 2. Happy Path Fix Solver */
-    printf("Test 2: Happy path position fix solver... ");
-    double true_lat = 34.0522;
-    double true_lon = -118.2437;
-    double ap_lat = 34.0;
-    double ap_lon = -118.0;
-    double gha_aries = 120.0;
-
-    /* simulated camera attitude: RA = 83.82, Dec = -5.39, Roll = 15.0 deg */
-    double cam_ra = 83.82 * M_PI / 180.0;
-    double cam_dec = -5.39 * M_PI / 180.0;
-    double cam_roll = 15.0 * M_PI / 180.0;
-
-    double z_cam[3] = {cos(cam_dec) * cos(cam_ra), cos(cam_dec) * sin(cam_ra), sin(cam_dec)};
-    double x_zero[3] = {-sin(cam_ra), cos(cam_ra), 0.0};
-    double y_zero[3] = {z_cam[1] * x_zero[2] - z_cam[2] * x_zero[1],
-                        z_cam[2] * x_zero[0] - z_cam[0] * x_zero[2],
-                        z_cam[0] * x_zero[1] - z_cam[1] * x_zero[0]};
-
-    double R[3][3];
-    int i;
-    for (i = 0; i < 3; i++) {
-        R[0][i] = cos(cam_roll) * x_zero[i] + sin(cam_roll) * y_zero[i];
-        R[1][i] = -sin(cam_roll) * x_zero[i] + cos(cam_roll) * y_zero[i];
-        R[2][i] = z_cam[i];
-    }
-
-    double true_lat_rad = true_lat * M_PI / 180.0;
-    double true_lon_rad = true_lon * M_PI / 180.0;
-    double true_lst_rad = (gha_aries * M_PI / 180.0) + true_lon_rad;
-
-    double true_zenith_cel[3] = {cos(true_lat_rad) * cos(true_lst_rad),
-                                 cos(true_lat_rad) * sin(true_lst_rad), sin(true_lat_rad)};
-
-    starfix_vector3_t zenith_cam;
-    zenith_cam.x =
-        R[0][0] * true_zenith_cel[0] + R[0][1] * true_zenith_cel[1] + R[0][2] * true_zenith_cel[2];
-    zenith_cam.y =
-        R[1][0] * true_zenith_cel[0] + R[1][1] * true_zenith_cel[1] + R[1][2] * true_zenith_cel[2];
-    zenith_cam.z =
-        R[2][0] * true_zenith_cel[0] + R[2][1] * true_zenith_cel[1] + R[2][2] * true_zenith_cel[2];
-
-    int status = (RESET_ARENA(),
-                  starfix_solve_position(1, &zenith_cam, (const double (*)[3])R, &gha_aries, ap_lat,
-                                         ap_lon, &solved_lat, &solved_lon, &arena, NULL));
-
-    if (status >= 0) {
-        double error_lat = solved_lat - true_lat;
-        double error_lon = (solved_lon - true_lon) * cos(true_lat_rad);
-        double dist_error_nm = sqrt(error_lat * error_lat + error_lon * error_lon) * 60.0;
-        if (dist_error_nm < 0.1) {
-            printf("Passed\n");
-            printf("  Solved Lat = %f, Lon = %f (error = %f nm)\n", solved_lat, solved_lon,
-                   dist_error_nm);
-        } else {
-            printf("FAILED (large error: %f nm)\n", dist_error_nm);
-        }
-    } else {
-        printf("FAILED (solver returned %d)\n", status);
-    }
-
-    return 0;
+    report("Test 6: Pole longitude convention", poles_ok);
+    pair[0] = (starfix_vector3_t){1, 0, 0};
+    pair[1] = (starfix_vector3_t){-1, 0, 0};
+    report("Test 7: Reject cancelling directions",
+           starfix_solve_position(2, pair, R, pair_times, &lat, &lon, NULL) ==
+               STARFIX_ERR_SOLVER_SINGULAR);
+    return failures ? 1 : 0;
 }

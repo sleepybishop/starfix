@@ -291,10 +291,6 @@ sub main {
     my $true_lat = 37.7749;
     my $true_lon = -122.4194;
 
-    # Assumed Position (AP)
-    my $ap_lat = 37.5;
-    my $ap_lon = -122.0;
-
     # Solved Position (from C solver run, dynamic with fallback)
     my $solved_lat = 37.7763;
     my $solved_lon = -122.4170;
@@ -312,14 +308,8 @@ sub main {
     }
 
     # Calculate pixel offsets relative to True position (Center of radar)
-    my $ap_dx = ($ap_lon - $true_lon) * cos($true_lat * 3.14159265 / 180.0) * $scale;
-    my $ap_dy = -($ap_lat - $true_lat) * $scale; # negate because y increases downward in image
-
     my $sol_dx = ($solved_lon - $true_lon) * cos($true_lat * 3.14159265 / 180.0) * $scale;
     my $sol_dy = -($solved_lat - $true_lat) * $scale;
-
-    my $ap_px = $center_x + $ap_dx;
-    my $ap_py = $center_y + $ap_dy;
 
     my $sol_px = $center_x + $sol_dx;
     my $sol_py = $center_y + $sol_dy;
@@ -338,12 +328,6 @@ sub main {
     $draw_args .= " -stroke \"#003300\" -strokewidth 3 -draw \"line 0,$center_y $width,$center_y\"";
     $draw_args .= " -stroke \"#003300\" -strokewidth 3 -draw \"line $center_x,0 $center_x,$height\"";
 
-    # Draw Assumed Position (AP) in Red
-    $draw_args .= " -stroke \"#FF0000\" -fill none -strokewidth 4 -draw \"circle $ap_px,$ap_py " . ($ap_px + 24) . ",$ap_py\"";
-    $draw_args .= " -stroke \"#FF0000\" -strokewidth 4 -draw \"line " . ($ap_px-36) . ",$ap_py " . ($ap_px+36) . ",$ap_py\"";
-    $draw_args .= " -stroke \"#FF0000\" -strokewidth 4 -draw \"line $ap_px," . ($ap_py-36) . " $ap_px," . ($ap_py+36) . "\"";
-    $draw_args .= " -fill \"#FF3333\" -stroke none -pointsize 36 -draw \"text " . ($ap_px+40) . "," . ($ap_py+12) . " 'Assumed Position (AP)'\"";
-
     # Draw True Position in Green (Center of Target)
     $draw_args .= " -stroke \"#00FF00\" -fill none -strokewidth 5 -draw \"circle $center_x,$center_y " . ($center_x + 18) . ",$center_y\"";
     $draw_args .= " -fill \"#33FF33\" -stroke none -pointsize 36 -draw \"text " . ($center_x+30) . "," . ($center_y-30) . " 'True Position (SF Mast)'\"";
@@ -354,12 +338,9 @@ sub main {
     $draw_args .= " -stroke \"#00FFFF\" -strokewidth 4 -draw \"line $sol_px," . ($sol_py-36) . " $sol_px," . ($sol_py+36) . "\"";
     $draw_args .= " -fill \"#33FFFF\" -stroke none -pointsize 36 -draw \"text " . ($sol_px+40) . "," . ($sol_py-30) . " 'Solved Position'\"";
 
-    # Draw line from AP to Solved showing convergence
-    $draw_args .= " -stroke \"#FFFF00\" -strokewidth 4 -draw \"line $ap_px,$ap_py $sol_px,$sol_py\"";
-
     # Write text block at top left
-    $draw_args .= " -fill white -stroke none -pointsize 54 -draw \"text 60,100 'Step 3: Celestial Position Solver Intersect'\"";
-    $draw_args .= " -fill \"#888888\" -pointsize 36 -draw \"text 60,170 'GPS-Denied Least Squares Solver via nanoqsp'\"";
+    $draw_args .= " -fill white -stroke none -pointsize 54 -draw \"text 60,100 'Step 3: Direct Celestial Position Fix'\"";
+    $draw_args .= " -fill \"#888888\" -pointsize 36 -draw \"text 60,170 'Attitude + measured zenith + UTC; no initial position'\"";
 
     # Write metrics at bottom left
     my $err_lat = $solved_lat - $true_lat;

@@ -14,13 +14,13 @@ use Test::More;
     ok($output =~ /Test 5: Divergent update is atomic.*Passed/, "EKF Test 5 (atomic rejection) passed");
 }
 
-# Test 2: Position Fix Solver (nanoqsp integration)
+# Test 2: Direct Position Fix Solver
 {
     my $output = `./t/test_solver 2>&1`;
     ok($? == 0 && $output !~ /FAILED/, "Solver test runner executed without hidden failures");
     
     ok($output =~ /Test 1: Argument validation.*Passed/, "Solver Test 1 (argument bounds) passed");
-    ok($output =~ /Test 2: Happy path position fix solver.*Passed/, "Solver Test 2 (least squares convergence) passed");
+    ok($output =~ /Test 2: Happy path position fix solver.*Passed/, "Solver Test 2 (direct spherical conversion) passed");
 }
 
 # Test 3: Centroiding (Image processing)

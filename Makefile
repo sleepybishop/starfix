@@ -18,7 +18,7 @@ nanoqsp_blas.o: deps/nanoqsp/nanoqsp_blas.c
 t/test_ekf: src/starfix_ekf.c src/test_ekf.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-t/test_solver: src/starfix_solver.c src/test_solver.c nanoqsp.o nanoqsp_blas.o
+t/test_solver: src/starfix_solver.c src/test_solver.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 t/test_centroid: src/starfix_centroid.c src/test_centroid.c
