@@ -27,6 +27,7 @@ TODO.md
 starfix_prototype
 starfix_cli
 t/test_*
+!t/test_*.py
 bench*
 scratch_*
 

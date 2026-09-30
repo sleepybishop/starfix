@@ -20,6 +20,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libjson-perl build-essential
+        python3 -m pip install pillow piexif
 
     - name: Build Database
       run: make db

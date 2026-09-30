@@ -45,6 +45,7 @@ lint:
 
 check: all
 	prove -v t/*.t
+	PYTHONDONTWRITEBYTECODE=1 python3 t/test_photo.py
 
 demo: starfix_cli
 	$(MAKE) -C demo_photo
