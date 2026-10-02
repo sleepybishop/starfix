@@ -37,3 +37,8 @@ trail_preprocessor
 *.png
 *.pgm
 
+
+examples/starfix_sim
+examples/starfix_navigation
+*.a
+*.d

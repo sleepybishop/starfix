@@ -7,10 +7,20 @@ StarFix is a high-performance, bare-metal, star tracker and celestial navigation
 ## Quick Start
 
 ### Build the Software
-Compile the CLI and test suite:
+Build the photo CLI and reusable `libstarfix.a`:
 ```bash
 make
 ```
+
+The default build contains centroiding, star identification, attitude fitting, and
+position solving. Navigation support is optional:
+```bash
+make navigation   # EKF, factor graph, NMEA library, and navigation example
+make simulations  # simulated camera/position and navigation examples
+```
+`make check` builds and tests both the core and optional examples. Simulated
+attitude/position commands live in `examples/starfix_sim`; trajectory demos live
+in `examples/starfix_navigation`. The photo CLI does not emit NMEA files.
 
 ### Rebuild the Database
 Download the HYG catalog and generate the optimized guide database:

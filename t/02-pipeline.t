@@ -78,7 +78,7 @@ sub read_json {
 
 # --- Stage 5: Attitude Determination ---
 {
-    my $output = `./starfix_cli --estimate-pose 2>&1`;
+    my $output = `./examples/starfix_sim --estimate-pose 2>&1`;
     ok($? == 0, "Attitude estimation step completed successfully");
     ok(-f $attitude_path, "attitude.json was generated");
     
@@ -91,7 +91,7 @@ sub read_json {
 
 # --- Stage 6: Celestial Position Fix ---
 {
-    my $output = `./starfix_cli --solve-fix 2>&1`;
+    my $output = `./examples/starfix_sim --solve-fix 2>&1`;
     ok($? == 0, "Position fix solver step completed successfully");
     
     ok($output =~ /Position Solver Error:\s+([\d\.]+)\s+Nautical Miles/, "Position solver error printed");
@@ -104,14 +104,14 @@ sub read_json {
 
 # --- Stage 7: EKF Trajectory Fusion ---
 {
-    my $output = `./starfix_cli --fuse-ekf 2>&1`;
+    my $output = `./examples/starfix_navigation --fuse-ekf 2>&1`;
     ok($? == 0, "EKF trajectory fusion step completed successfully");
     ok($output =~ /Simulation Finished!/, "EKF completion message printed");
 }
 
 # --- Stage 8: Factor Graph Trajectory Smoothing ---
 {
-    my $output = `./starfix_cli --fuse-graph 2>&1`;
+    my $output = `./examples/starfix_navigation --fuse-graph 2>&1`;
     ok($? == 0, "Factor Graph trajectory smoothing step completed successfully");
     ok($output =~ /Factor Graph Optimization Finished!/, "Factor Graph completion message printed");
 }
