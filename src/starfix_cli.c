@@ -9,7 +9,7 @@
 #include "starfix_centroid.h"
 #include "starfix_cli_io.h"
 #include "starfix_identify.h"
-#include "starfix_solver.h"
+#include "starfix_photo.h"
 
 /* 10 MB statically allocated memory pool for the entire pipeline */
 static uint8_t mempool[10 * 1024 * 1024];
@@ -118,19 +118,7 @@ static int do_identify(int width, int height, double fov_deg, double observation
 
 static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, double fov_deg,
                           double observation_year, int attitude_only, double crop_size) {
-    if (!isfinite(gha_aries) || !isfinite(fov_deg) || !isfinite(observation_year) ||
-        fov_deg <= 0.0 || fov_deg >= 180.0 || !isfinite(crop_size) || crop_size <= 0.0) {
-        printf("Invalid photo attitude parameters.\n");
-        return 1;
-    }
-    {
-        double gravity_norm = sqrt(g_x * g_x + g_y * g_y + g_z * g_z);
-        if (!isfinite(gravity_norm) || fabs(gravity_norm - 1.0) > 1e-3) {
-            printf("Camera zenith vector must be normalized.\n");
-            return 1;
-        }
-    }
-
+    if (!isfinite(observation_year)) return 1;
     starfix_catalog_star_t* catalog = NULL;
     starfix_hash_entry_t* hash_table = NULL;
     uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
@@ -178,121 +166,26 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         return 1;
     }
 
-    double fov_rad = fov_deg * M_PI / 180.0;
-    double f_len = crop_size / (2.0 * tan(fov_rad / 2.0));
-
-    starfix_vector3_t* cam_vecs =
-        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
-    starfix_vector3_t* raw_cam_vecs =
-        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
-    starfix_vector3_t* cel_vecs =
-        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
-    if (cam_vecs == NULL || raw_cam_vecs == NULL || cel_vecs == NULL) {
-        free(catalog);
-        free(hash_table);
-        free(cam_vecs);
-        free(raw_cam_vecs);
-        free(cel_vecs);
-        return 1;
-    }
-
-    int i;
-    for (i = 0; i < match_count; i++) {
-        int c_idx = matches[i].centroid_idx;
-        int cat_idx = matches[i].catalog_idx;
-        if (c_idx < 0 || c_idx >= cent_count || cat_idx < 0 || (uint32_t)cat_idx >= num_stars) {
-            free(catalog);
-            free(hash_table);
-            free(cam_vecs);
-            free(raw_cam_vecs);
-            free(cel_vecs);
-            return 1;
-        }
-
-        /* convert centroids to camera frame unit vectors */
-        double cx = (centroids[c_idx].u - crop_size / 2.0) / f_len;
-        double cy = (centroids[c_idx].v - crop_size / 2.0) / f_len;
-        double cz = 1.0;
-        double norm = sqrt(cx * cx + cy * cy + cz * cz);
-        cam_vecs[i].x = cx / norm;
-        cam_vecs[i].y = cy / norm;
-        cam_vecs[i].z = cz / norm;
-        raw_cam_vecs[i] = cam_vecs[i];
-
-        /* convert catalog coordinates to celestial frame unit vectors */
-        double dec = starfix_catalog_dec(&catalog[cat_idx]);
-        double ra = starfix_catalog_ra(&catalog[cat_idx]);
-        cel_vecs[i].x = cos(dec) * cos(ra);
-        cel_vecs[i].y = cos(dec) * sin(ra);
-        cel_vecs[i].z = sin(dec);
-    }
-
-    /* pass 1: estimate a rough camera attitude matrix R */
-    double R[3][3];
-    starfix_quaternion_t q_est;
-    starfix_telemetry_t attitude_telem = {0};
+    starfix_photo_options_t options = {
+        .width = crop_size,
+        .height = crop_size,
+        .fov_deg = fov_deg,
+        .gha_aries = gha_aries,
+        .zenith_camera = {g_x, g_y, g_z},
+    };
+    starfix_photo_result_t result;
     RESET_ARENA();
-    starfix_status_t status = starfix_solve_attitude_ransac(match_count, cam_vecs, cel_vecs, 0.25,
-                                                            &q_est, R, &arena, &attitude_telem);
-
-    if (status == STARFIX_SUCCESS) {
-        printf("Applying atmospheric refraction correction (measured zenith)...\n");
-        {
-            starfix_vector3_t z_cam = {g_x, g_y, g_z};
-            for (i = 0; i < match_count; i++) cam_vecs[i] = raw_cam_vecs[i];
-            if (starfix_correct_refraction(match_count, cam_vecs, &z_cam, 10.0, 1010.0) !=
-                STARFIX_SUCCESS) {
-                status = STARFIX_ERR_INVALID_PARAM;
-            }
-            attitude_telem = (starfix_telemetry_t){0};
-            RESET_ARENA();
-            if (status == STARFIX_SUCCESS)
-                status = starfix_solve_attitude_ransac(match_count, cam_vecs, cel_vecs, 0.25,
-                                                       &q_est, R, &arena, &attitude_telem);
-        }
-    }
-
-    /* calculate RMS against the corrected observations. every matched star must project in front
-     * of the camera; otherwise a skipped projection could make an invalid solution look perfect */
-    double sum_sq_err = 0.0;
-    double rms_err = INFINITY;
-    if (status == STARFIX_SUCCESS) {
-        for (i = 0; i < match_count; i++) {
-            double vx = R[0][0] * cel_vecs[i].x + R[0][1] * cel_vecs[i].y + R[0][2] * cel_vecs[i].z;
-            double vy = R[1][0] * cel_vecs[i].x + R[1][1] * cel_vecs[i].y + R[1][2] * cel_vecs[i].z;
-            double vz = R[2][0] * cel_vecs[i].x + R[2][1] * cel_vecs[i].y + R[2][2] * cel_vecs[i].z;
-            if (vz <= 0.0 || cam_vecs[i].z <= 0.0) {
-                status = STARFIX_ERR_INVALID_PARAM;
-                break;
-            }
-            double u_proj = crop_size / 2.0 + (vx / vz) * f_len;
-            double v_proj = crop_size / 2.0 + (vy / vz) * f_len;
-            double u_observed = crop_size / 2.0 + (cam_vecs[i].x / cam_vecs[i].z) * f_len;
-            double v_observed = crop_size / 2.0 + (cam_vecs[i].y / cam_vecs[i].z) * f_len;
-            double du = u_proj - u_observed;
-            double dv = v_proj - v_observed;
-            sum_sq_err += du * du + dv * dv;
-        }
-        if (status == STARFIX_SUCCESS) {
-            rms_err = sqrt(sum_sq_err / (double)match_count);
-            printf("RMS_ERROR: %.9f pixels\n", rms_err);
-            printf("INLIERS: %u/%d\n", attitude_telem.ransac_inliers, match_count);
-        }
-    }
-
-    free(cam_vecs);
-    free(raw_cam_vecs);
-    free(cel_vecs);
-
-    if (status != STARFIX_SUCCESS || !isfinite(rms_err) || rms_err > 3.0 ||
-        attitude_telem.ransac_inliers < 3 ||
-        (double)attitude_telem.ransac_inliers / (double)match_count < 0.6) {
-        printf("Attitude failed quality checks (status %d, RMS %.6f, inliers %u/%d)\n", status,
-               rms_err, attitude_telem.ransac_inliers, match_count);
-        free(catalog);
-        free(hash_table);
+    starfix_status_t status = starfix_solve_photo(cent_count, centroids, num_stars, catalog,
+                                                  match_count, matches, &options, &result, &arena);
+    free(catalog);
+    free(hash_table);
+    if (status != STARFIX_SUCCESS) {
+        fprintf(stderr, "Photo solution failed quality or input checks (status %d)\n", status);
         return 1;
     }
+    const double (*R)[3] = (const double (*)[3])result.rotation;
+    printf("RMS_ERROR: %.9f pixels\n", result.rms_pixels);
+    printf("INLIERS: %u/%d\n", result.inliers, result.matches);
 
     /* Convert R to Euler Angles */
     double R_flat[9] = {R[0][0], R[0][1], R[0][2], R[1][0], R[1][1],
@@ -307,38 +200,12 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
     printf("ROTATION_MATRIX: %.12f %.12f %.12f %.12f %.12f %.12f %.12f %.12f %.12f\n", R[0][0],
            R[0][1], R[0][2], R[1][0], R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]);
 
-    if (attitude_only) {
-        free(catalog);
-        free(hash_table);
-        return 0;
-    }
-
-    /* Solve absolute position using command line parameters */
-    double solved_lat = 0.0;
-    double solved_lon = 0.0;
-
-    starfix_vector3_t zenith_meas[1];
-    zenith_meas[0].x = g_x;
-    zenith_meas[0].y = g_y;
-    zenith_meas[0].z = g_z;
-
-    RESET_ARENA();
-    starfix_telemetry_t telem = {0};
-    starfix_status_t solve_status = starfix_solve_position(
-        1, zenith_meas, (const double (*)[3])R, &gha_aries, &solved_lat, &solved_lon, &telem);
-
-    if (solve_status == STARFIX_SUCCESS) {
+    if (!attitude_only) {
         printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
-        printf("  Solved Latitude  : %f degrees North\n", solved_lat);
-        printf("  Solved Longitude : %f degrees East\n", solved_lon);
-
-    } else {
-        printf("Position fix solver failed with status %d\n", solve_status);
+        printf("  Solved Latitude  : %f degrees North\n", result.latitude);
+        printf("  Solved Longitude : %f degrees East\n", result.longitude);
     }
-
-    free(catalog);
-    free(hash_table);
-    return (solve_status == STARFIX_SUCCESS) ? 0 : 1;
+    return 0;
 }
 
 int main(int argc, char** argv) {

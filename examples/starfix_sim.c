@@ -14,8 +14,8 @@ static starfix_arena_t arena;
 #define M_PI 3.14159265358979323846
 #endif
 
-#include "starfix_attitude.h"
 #include "starfix_cli_io.h"
+#include "starfix_photo.h"
 #include "starfix_solver.h"
 
 static int write_attitude_json(const char* path, double ra, double dec, double roll,
@@ -113,72 +113,24 @@ static int do_estimate_pose() {
         return -1;
     }
 
-    double fov_rad = 12.0 * M_PI / 180.0;
-    double focal_length = 1024.0 / (2.0 * tan(fov_rad / 2.0));
-
-    starfix_vector3_t* cam_vectors =
-        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
-    starfix_vector3_t* cat_vectors =
-        (starfix_vector3_t*)malloc((size_t)match_count * sizeof(starfix_vector3_t));
-    if (cam_vectors == NULL || cat_vectors == NULL) {
-        free(catalog);
-        free(hash_table);
-        free(cam_vectors);
-        free(cat_vectors);
-        return -1;
-    }
-
-    int i;
-    for (i = 0; i < match_count; i++) {
-        int c_idx = matches[i].centroid_idx;
-        int cat_idx = matches[i].catalog_idx;
-        if (c_idx < 0 || c_idx >= cent_count || cat_idx < 0 || (uint32_t)cat_idx >= num_stars) {
-            free(catalog);
-            free(hash_table);
-            free(cam_vectors);
-            free(cat_vectors);
-            return -1;
-        }
-
-        /* camera vector */
-        double cx = (centroids[c_idx].u - 512.0) / focal_length;
-        double cy = (centroids[c_idx].v - 512.0) / focal_length;
-        double cz = 1.0;
-        double norm = sqrt(cx * cx + cy * cy + cz * cz);
-        cam_vectors[i].x = cx / norm;
-        cam_vectors[i].y = cy / norm;
-        cam_vectors[i].z = cz / norm;
-
-        /* catalog vector */
-        double dec_s = starfix_catalog_dec(&catalog[cat_idx]);
-        double ra_s = starfix_catalog_ra(&catalog[cat_idx]);
-        cat_vectors[i].x = cos(dec_s) * cos(ra_s);
-        cat_vectors[i].y = cos(dec_s) * sin(ra_s);
-        cat_vectors[i].z = sin(dec_s);
-    }
-
-    /* Apply atmospheric refraction correction to observed camera vectors using standard Zenith
-     * (0,0,1) */
-    starfix_vector3_t z_cam = {0.0, 0.0, 1.0};
-    printf("Applying atmospheric refraction correction (temp: 15.0C, press: 1013.25hPa)...\n");
-    starfix_correct_refraction(match_count, cam_vectors, &z_cam, 15.0, 1013.25);
-
-    starfix_quaternion_t q_est;
-    double R[3][3];
-    starfix_telemetry_t telem = {0};
-    /* use RANSAC solver with a 0.1 degree threshold to filter out any outliers */
+    starfix_photo_options_t options = {
+        .width = 1024,
+        .height = 1024,
+        .fov_deg = 12,
+        .gha_aries = 202.4194,
+        .zenith_camera = {0, 0, 1},
+    };
+    starfix_photo_result_t result;
     RESET_ARENA();
-    starfix_status_t inlier_status = starfix_solve_attitude_ransac(
-        match_count, cam_vectors, cat_vectors, 0.1, &q_est, R, &arena, &telem);
-    int num_inliers = (int)telem.ransac_inliers;
-    if (inlier_status != STARFIX_SUCCESS || num_inliers < 2) {
-        printf("Attitude solver failed (RANSAC found too few inliers: %d).\n", num_inliers);
-        free(catalog);
-        free(hash_table);
-        free(cam_vectors);
-        free(cat_vectors);
-        return -1;
+    starfix_status_t status = starfix_solve_photo(cent_count, centroids, num_stars, catalog,
+                                                  match_count, matches, &options, &result, &arena);
+    free(catalog);
+    free(hash_table);
+    if (status != STARFIX_SUCCESS) {
+        fprintf(stderr, "Simulated photo fit failed (status %d)\n", status);
+        return 1;
     }
+    const double (*R)[3] = (const double (*)[3])result.rotation;
 
     /* extract pointing angles */
     double R_flat[9] = {R[0][0], R[0][1], R[0][2], R[1][0], R[1][1],
@@ -197,10 +149,6 @@ static int do_estimate_pose() {
 
     write_attitude_json("data/attitude.json", ra, dec, roll, (const double (*)[3])R);
 
-    free(catalog);
-    free(hash_table);
-    free(cam_vectors);
-    free(cat_vectors);
     return 0;
 }
 

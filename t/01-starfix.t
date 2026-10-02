@@ -23,6 +23,12 @@ use Test::More;
     ok($output =~ /Test 2: Happy path position fix solver.*Passed/, "Solver Test 2 (direct spherical conversion) passed");
 }
 
+# The native photo API can reuse caller-owned workspace and fails atomically.
+{
+    my $output = `./t/test_photo 2>&1`;
+    ok($? == 0 && $output !~ /FAILED/, "Photo API workspace reuse and failure handling passed");
+}
+
 # Test 3: Centroiding (Image processing)
 {
     my $output = `./t/test_centroid 2>&1`;

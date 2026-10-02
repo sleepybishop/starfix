@@ -22,6 +22,11 @@ make simulations  # simulated camera/position and navigation examples
 attitude/position commands live in `examples/starfix_sim`; trajectory demos live
 in `examples/starfix_navigation`. The photo CLI does not emit NMEA files.
 
+The native `starfix_solve_photo()` API in `src/starfix_photo.h` accepts a precessed
+catalog, centroids, identified matches, and camera geometry. It returns attitude,
+quality measurements, and a direct position fix in one structure, without file I/O
+or heap allocations. The CLI and simulated-camera example share this implementation.
+
 ### Rebuild the Database
 Download the HYG catalog and generate the optimized guide database:
 ```bash
