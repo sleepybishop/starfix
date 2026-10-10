@@ -171,8 +171,7 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
                                      double initial_lat, double initial_lon,
                                      const starfix_odometry_t* odom, int num_fixes,
                                      const starfix_fix_t* fixes, starfix_pose_t* poses,
-                                     double* est_scale, double* est_bias, starfix_arena_t arena,
-                                     starfix_telemetry_t* telem) {
+                                     double* est_scale, double* est_bias, starfix_arena_t arena) {
     if (num_nodes <= 0 || steps_per_node <= 0 || num_fixes < 0 || !isfinite(dt_sec) ||
         dt_sec <= 0.0 || !isfinite(initial_lat) || !isfinite(initial_lon) || odom == NULL ||
         poses == NULL || est_scale == NULL || est_bias == NULL ||
@@ -257,6 +256,5 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
     for (int i = 0; i <= num_nodes; i++) poses[i] = (starfix_pose_t){x[2 * i], x[2 * i + 1]};
     *est_scale = x[n - 2];
     *est_bias = x[n - 1];
-    if (telem) telem->solver_iterations = (uint32_t)iterations;
     return STARFIX_SUCCESS;
 }

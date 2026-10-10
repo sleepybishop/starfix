@@ -158,14 +158,11 @@ static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_
                        double field_cos, starfix_match_t verified[20], double* error) {
     int i, j, seed;
     double R[3][3];
-    starfix_quaternion_t q;
-    if (starfix_solve_attitude(4, w_seed, v_seed, &q, R) != STARFIX_SUCCESS) return 0;
+    if (starfix_solve_attitude(4, w_seed, v_seed, R) != STARFIX_SUCCESS) return 0;
     /* reject mirrored seeds before searching for additional matches */
     for (seed = 0; seed < 4; seed++) {
-        starfix_vector3_t v = v_seed[seed], w = w_seed[seed];
-        double dot = w.x * (R[0][0] * v.x + R[0][1] * v.y + R[0][2] * v.z) +
-                     w.y * (R[1][0] * v.x + R[1][1] * v.y + R[1][2] * v.z) +
-                     w.z * (R[2][0] * v.x + R[2][1] * v.y + R[2][2] * v.z);
+        starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R, v_seed[seed]);
+        double dot = starfix_dot(w_seed[seed], rotated);
         if (dot < verify_cos) return 0;
     }
     int nearest[20];
@@ -176,12 +173,11 @@ static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_
     }
     for (j = 0; j < (int)num_stars; j++) {
         starfix_vector3_t v = catalog_vectors[j];
-        double z = R[2][0] * v.x + R[2][1] * v.y + R[2][2] * v.z;
+        double z = starfix_row_dot(R[2], v);
         if (z < field_cos) continue;
-        double x = R[0][0] * v.x + R[0][1] * v.y + R[0][2] * v.z;
-        double y = R[1][0] * v.x + R[1][1] * v.y + R[1][2] * v.z;
+        starfix_vector3_t rotated = {starfix_row_dot(R[0], v), starfix_row_dot(R[1], v), z};
         for (i = 0; i < num_observed; i++) {
-            double dot = x * observed[i].x + y * observed[i].y + z * observed[i].z;
+            double dot = starfix_dot(rotated, observed[i]);
             if (dot > nearest_dot[i]) {
                 nearest_dot[i] = dot;
                 nearest[i] = j;
@@ -215,13 +211,8 @@ typedef struct {
 
 static const int pairs[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
 
-static starfix_vector3_t catalog_vector(const starfix_catalog_star_t* star) {
-    return (starfix_vector3_t){cos(star->dec) * cos(star->ra), cos(star->dec) * sin(star->ra),
-                               sin(star->dec)};
-}
-
 static double separation(starfix_vector3_t a, starfix_vector3_t b) {
-    double dot = a.x * b.x + a.y * b.y + a.z * b.z;
+    double dot = starfix_dot(a, b);
     if (dot > 1.0) dot = 1.0;
     if (dot < -1.0) dot = -1.0;
     return acos(dot);
@@ -234,15 +225,13 @@ static int track_stars(int count, const starfix_vector3_t* camera, uint32_t num_
     double tolerance = cos(0.5 * M_PI / 180.0);
     double field = cos(fov / 2.0 + M_PI / 180.0);
     for (int j = 0; j < (int)num_stars && found < capacity; j++) {
-        starfix_vector3_t v = catalog_vector(&catalog[j]);
-        double x = R[0][0] * v.x + R[0][1] * v.y + R[0][2] * v.z;
-        double y = R[1][0] * v.x + R[1][1] * v.y + R[1][2] * v.z;
-        double z = R[2][0] * v.x + R[2][1] * v.y + R[2][2] * v.z;
-        if (z < field) continue;
+        starfix_vector3_t v = starfix_celestial_ray(catalog[j].ra, catalog[j].dec);
+        starfix_vector3_t rotated = starfix_rotate(R, v);
+        if (rotated.z < field) continue;
         int nearest = -1;
         double best_dot = -1.0;
         for (int i = 0; i < count; i++) {
-            double dot = x * camera[i].x + y * camera[i].y + z * camera[i].z;
+            double dot = starfix_dot(rotated, camera[i]);
             if (dot > best_dot) {
                 best_dot = dot;
                 nearest = i;
@@ -342,13 +331,11 @@ int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroid
 
     int observed = num_centroids < 20 ? num_centroids : 20;
     double fov = fov_deg * M_PI / 180.0;
-    double focal = width / (2.0 * tan(fov / 2.0));
+    double focal = starfix_focal_length(width, fov_deg);
     starfix_vector3_t camera[20];
     for (int i = 0; i < observed; i++) {
-        double x = (centroids[i].u - width / 2.0) / focal;
-        double y = (centroids[i].v - height / 2.0) / focal;
-        double norm = sqrt(x * x + y * y + 1.0);
-        camera[i] = (starfix_vector3_t){x / norm, y / norm, 1.0 / norm};
+        camera[i] =
+            starfix_camera_ray(centroids[i].u - width / 2.0, centroids[i].v - height / 2.0, focal);
     }
     if (attitude_hint) {
         int count = track_stars(observed, camera, db->num_stars, db->stars, attitude_hint, fov,
@@ -361,7 +348,8 @@ int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroid
 
     starfix_vector3_t* catalog = starfix_alloc_array(&arena, starfix_vector3_t, db->num_stars);
     if (!catalog) return STARFIX_ERR_MEMORY;
-    for (uint32_t i = 0; i < db->num_stars; i++) catalog[i] = catalog_vector(&db->stars[i]);
+    for (uint32_t i = 0; i < db->num_stars; i++)
+        catalog[i] = starfix_celestial_ray(db->stars[i].ra, db->stars[i].dec);
     double corner = atan(hypot(width, height) / (2.0 * focal));
     double field_cos = cos(corner + 0.5 * M_PI / 180.0);
     match_set_t best = {.count = 0, .error = HUGE_VAL};
@@ -405,16 +393,11 @@ int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroid
     return count >= 3 ? count : STARFIX_ERR_IDENTIFY_NO_MATCH;
 }
 
-int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
-                                 double* cached_year) {
+int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year) {
     if (catalog == NULL || num_stars == 0) {
         return STARFIX_ERR_NULL_POINTER;
     }
     if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
-
-    if (cached_year && fabs(year - *cached_year) < (1.0 / 365.25)) {
-        return 0; /* cached coordinates are still valid (within ~1 day) */
-    }
 
     double mjd = starfix_year_to_mjd(year);
     uint32_t i;
@@ -430,8 +413,5 @@ int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_s
         catalog[i].dec = dec;
     }
 
-    if (cached_year) {
-        *cached_year = year;
-    }
     return 0;
 }

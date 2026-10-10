@@ -1,7 +1,7 @@
-#include "starfix_status.h"
-
 #ifndef STARFIX_EKF_H
 #define STARFIX_EKF_H
+
+#include "starfix_status.h"
 
 typedef struct {
     double lat;     /* latitude in degrees */
@@ -22,6 +22,6 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
 
 /* correct state using celestial lat/lon fix */
 starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat,
-                                     double celestial_lon, starfix_telemetry_t* telem);
+                                     double celestial_lon);
 
 #endif /* STARFIX_EKF_H */

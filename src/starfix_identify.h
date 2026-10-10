@@ -42,9 +42,8 @@ int starfix_load_db(const char* db_path, starfix_db_t* db);
 /* free both arrays and zero the database */
 void starfix_free_db(starfix_db_t* db);
 
-/* propagate J2000 coordinates to year; optional cached_year skips changes < one day */
-int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
-                                 double* cached_year);
+/* propagate J2000 coordinates to year */
+int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year);
 
 /* return up to max_matches matches (>= 3), or a negative error; hashes must be sorted.
  * fov_deg is horizontal; camera axes are +X right, +Y down, +Z forward.

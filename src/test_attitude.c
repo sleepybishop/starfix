@@ -1,3 +1,4 @@
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,14 +23,14 @@ int main() {
 
     starfix_vector3_t w_dummy[2] = {{1, 0, 0}, {0, 1, 0}};
     starfix_vector3_t v_dummy[2] = {{1, 0, 0}, {0, 1, 0}};
-    starfix_quaternion_t q_est;
+
     double R_est[3][3];
 
     /* 1. NULL Pointer & Invalid Size Checks */
     printf("Test 1: Boundary check... ");
-    int ret1 = starfix_solve_attitude(1, w_dummy, v_dummy, &q_est, R_est);
-    int ret2 = starfix_solve_attitude(2, NULL, v_dummy, &q_est, R_est);
-    int ret3 = starfix_solve_attitude_ransac(2, NULL, v_dummy, 0.1, &q_est, R_est, arena);
+    int ret1 = starfix_solve_attitude(1, w_dummy, v_dummy, R_est);
+    int ret2 = starfix_solve_attitude(2, NULL, v_dummy, R_est);
+    int ret3 = starfix_solve_attitude_ransac(2, NULL, v_dummy, 0.1, R_est, arena);
 
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
@@ -76,7 +77,7 @@ int main() {
         w[i].z /= norm;
     }
 
-    int status = starfix_solve_attitude(5, w, v, &q_est, R_est);
+    int status = starfix_solve_attitude(5, w, v, R_est);
     if (status == 0) {
         double max_err = 0.0;
         int r, c;
@@ -107,7 +108,7 @@ int main() {
 
     /* davenport solver should execute and return a valid eigenvector (status 0) */
     /* but attitude might be arbitrary or under-constrained */
-    int status_degen = starfix_solve_attitude(2, w_degen, v_degen, &q_est, R_est);
+    int status_degen = starfix_solve_attitude(2, w_degen, v_degen, R_est);
     if (status_degen == 0) {
         printf("Passed (handled gracefully)\n");
     } else {
@@ -143,8 +144,7 @@ int main() {
     w_ransac[5].z = 0.0;
 
     /* run RANSAC attitude solver */
-    int ransac_inliers =
-        starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, &q_est, R_est, arena);
+    int ransac_inliers = starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, R_est, arena);
 
     if (ransac_inliers == 4) {
         double max_err = 0.0;
@@ -212,6 +212,28 @@ int main() {
     } else {
         printf("FAILED (status=%d, x=%f (exp=%f), y=%f (exp=%f))\n", ab_status, v_aberration[0].x,
                expected_ab_x, v_aberration[0].y, expected_ab_y);
+    }
+
+    printf("Test 7: Shared geometry conventions... ");
+    double focal = starfix_focal_length(200, 90);
+    starfix_vector3_t center = starfix_camera_ray(0, 0, focal);
+    starfix_vector3_t corner = starfix_camera_ray(100, -100, focal);
+    starfix_vector3_t extreme = starfix_camera_ray(DBL_MAX / 4, 0, 1);
+    starfix_vector3_t east = starfix_celestial_ray(M_PI / 2, 0);
+    starfix_vector3_t pole = starfix_celestial_ray(0, M_PI / 2);
+    const double cyclic[3][3] = {{0, 0, 1}, {1, 0, 0}, {0, 1, 0}};
+    starfix_vector3_t rotated = starfix_rotate(cyclic, (starfix_vector3_t){1, 2, 3});
+    if (fabs(focal - 100) < 1e-12 && fabs(center.x) < 1e-12 && fabs(center.y) < 1e-12 &&
+        fabs(center.z - 1) < 1e-12 && fabs(corner.x - 1 / sqrt(3.0)) < 1e-12 &&
+        fabs(corner.y + 1 / sqrt(3.0)) < 1e-12 && fabs(corner.z - 1 / sqrt(3.0)) < 1e-12 &&
+        fabs(extreme.x - 1) < 1e-12 && isfinite(extreme.z) && extreme.z > 0 &&
+        fabs(east.x) < 1e-12 && fabs(east.y - 1) < 1e-12 && fabs(east.z) < 1e-12 &&
+        fabs(pole.x) < 1e-12 && fabs(pole.z - 1) < 1e-12 && fabs(rotated.x - 3) < 1e-12 &&
+        fabs(rotated.y - 1) < 1e-12 && fabs(rotated.z - 2) < 1e-12 &&
+        fabs(starfix_dot(rotated, rotated) - 14) < 1e-12) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (projection, rotation, or normalization)\n");
     }
 
     return 0;

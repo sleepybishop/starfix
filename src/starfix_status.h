@@ -24,9 +24,4 @@ typedef enum {
     STARFIX_ERR_EKF_DIVERGENCE = -50
 } starfix_status_t;
 
-typedef struct {
-    uint32_t solver_iterations;
-    double ekf_innovation_norm;
-} starfix_telemetry_t;
-
 #endif /* STARFIX_STATUS_H */

@@ -26,7 +26,7 @@ static int load_catalog(starfix_db_t* db, double year) {
         fprintf(stderr, "Could not load data/starfix_db.bin or ../data/starfix_db.bin.\n");
         return STARFIX_ERR_DATA_CORRUPTION;
     }
-    return starfix_propagate_astrometry(db->stars, db->num_stars, year, NULL);
+    return starfix_propagate_astrometry(db->stars, db->num_stars, year);
 }
 
 static int do_centroid(int threshold) {

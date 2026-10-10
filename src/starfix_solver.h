@@ -1,13 +1,8 @@
 #ifndef STARFIX_SOLVER_H
 #define STARFIX_SOLVER_H
 
+#include "starfix_geometry.h"
 #include "starfix_status.h"
-
-typedef struct {
-    double x;
-    double y;
-    double z;
-} starfix_vector3_t;
 
 /* average zenith measurements at a stationary position using a shared catalog-to-camera R.
  * GHA and outputs are degrees; nonzero zenith vectors are normalized.

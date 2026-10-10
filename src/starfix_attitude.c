@@ -104,14 +104,13 @@ static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
 }
 
 starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
-                                        const starfix_vector3_t* v, starfix_quaternion_t* q_est,
-                                        double R_est[3][3]) {
+                                        const starfix_vector3_t* v, double R_est[3][3]) {
     int i, j, k;
 
     if (num_stars < 2) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    if (w == NULL || v == NULL || q_est == NULL || R_est == NULL) {
+    if (w == NULL || v == NULL || R_est == NULL) {
         return STARFIX_ERR_ATTITUDE_DEGENERATE;
     }
 
@@ -163,19 +162,6 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
         q3 /= q_norm;
     }
 
-    /* make scalar part q0 non-negative by convention */
-    if (q0 < 0) {
-        q0 = -q0;
-        q1 = -q1;
-        q2 = -q2;
-        q3 = -q3;
-    }
-
-    q_est->q[0] = q0;
-    q_est->q[1] = q1;
-    q_est->q[2] = q2;
-    q_est->q[3] = q3;
-
     R_est[0][0] = 1.0 - 2.0 * (q2 * q2 + q3 * q3);
     R_est[0][1] = 2.0 * (q1 * q2 - q0 * q3);
     R_est[0][2] = 2.0 * (q1 * q3 + q0 * q2);
@@ -193,12 +179,11 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
 
 int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
                                   const starfix_vector3_t* v, double threshold_deg,
-                                  starfix_quaternion_t* q_est, double R_est[3][3],
-                                  starfix_arena_t arena) {
+                                  double R_est[3][3], starfix_arena_t arena) {
     if (num_stars < 2) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    if (w == NULL || v == NULL || q_est == NULL || R_est == NULL) {
+    if (w == NULL || v == NULL || R_est == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
     if (!isfinite(threshold_deg) || threshold_deg <= 0.0 || threshold_deg >= 180.0) {
@@ -225,7 +210,6 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
 
     starfix_vector3_t w_sample[2];
     starfix_vector3_t v_sample[2];
-    starfix_quaternion_t q_tmp;
     double R_tmp[3][3];
 
     int iter;
@@ -241,7 +225,7 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
         v_sample[0] = v[idx1];
         v_sample[1] = v[idx2];
 
-        int status = starfix_solve_attitude(2, w_sample, v_sample, &q_tmp, R_tmp);
+        int status = starfix_solve_attitude(2, w_sample, v_sample, R_tmp);
         if (status < 0) {
             continue;
         }
@@ -249,12 +233,8 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
         int current_inlier_count = 0;
         int i;
         for (i = 0; i < num_stars; i++) {
-            /* rotate catalog star: v_rot = R_tmp * v[i] */
-            double rx = R_tmp[0][0] * v[i].x + R_tmp[0][1] * v[i].y + R_tmp[0][2] * v[i].z;
-            double ry = R_tmp[1][0] * v[i].x + R_tmp[1][1] * v[i].y + R_tmp[1][2] * v[i].z;
-            double rz = R_tmp[2][0] * v[i].x + R_tmp[2][1] * v[i].y + R_tmp[2][2] * v[i].z;
-
-            double dot = rx * w[i].x + ry * w[i].y + rz * w[i].z;
+            starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R_tmp, v[i]);
+            double dot = starfix_dot(rotated, w[i]);
             if (dot >= cos_threshold) {
                 current_inliers[current_inlier_count++] = i;
             }
@@ -284,7 +264,7 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
         v = v_inliers;
         count = best_inlier_count;
     }
-    int status = starfix_solve_attitude(count, w, v, q_est, R_est);
+    int status = starfix_solve_attitude(count, w, v, R_est);
     if (status < 0) return status;
     return count;
 }
@@ -297,7 +277,7 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
 
     int i;
     for (i = 0; i < num_stars; i++) {
-        double cos_theta = w[i].x * z_cam->x + w[i].y * z_cam->y + w[i].z * z_cam->z;
+        double cos_theta = starfix_dot(w[i], *z_cam);
 
         if (cos_theta > 1.0) cos_theta = 1.0;
         if (cos_theta < -1.0) cos_theta = -1.0;

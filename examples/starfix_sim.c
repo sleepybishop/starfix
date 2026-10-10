@@ -98,7 +98,7 @@ static int do_estimate_pose() {
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
     printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_astrometry(db.stars, db.num_stars, current_year, NULL);
+    starfix_propagate_astrometry(db.stars, db.num_stars, current_year);
 
     /* load detected centroids */
     starfix_centroid_t centroids[1000];

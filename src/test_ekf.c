@@ -21,7 +21,7 @@ int main() {
     printf("Test 1: NULL pointer robustness... ");
     starfix_ekf_init(NULL, 34.0, -118.0);
     starfix_ekf_predict(NULL, 10.0, 45.0, 10.0);
-    starfix_ekf_correct(NULL, 34.0, -118.0, NULL);
+    starfix_ekf_correct(NULL, 34.0, -118.0);
     printf("Passed (no crash)\n");
 
     /* 2. Happy Path Initialization & DR Propagation */
@@ -51,7 +51,7 @@ int main() {
     printf("Test 3: Celestial correction... ");
     double celestial_lat = 34.1720;
     double celestial_lon = -118.1050;
-    starfix_ekf_correct(&filter, celestial_lat, celestial_lon, NULL);
+    starfix_ekf_correct(&filter, celestial_lat, celestial_lon);
 
     if (fabs(filter.lat - 34.171969) < 1e-4 && fabs(filter.lon - -118.104949) < 1e-4) {
         printf("Passed\n");
@@ -71,7 +71,7 @@ int main() {
     double old_lat = filter.lat;
     double old_lon = filter.lon;
     /* correct with a far-away point */
-    starfix_ekf_correct(&filter, 40.0, -100.0, NULL);
+    starfix_ekf_correct(&filter, 40.0, -100.0);
     /* state should not change much because R is huge */
     if (fabs(filter.lat - old_lat) < 1e-6 && fabs(filter.lon - old_lon) < 1e-6) {
         printf("Passed\n");
@@ -83,13 +83,29 @@ int main() {
     printf("Test 5: Divergent update is atomic... ");
     starfix_ekf_init(&filter, 10.0, 20.0);
     starfix_ekf_t before = filter;
-    int divergent_status = starfix_ekf_correct(&filter, 80.0, 150.0, NULL);
+    int divergent_status = starfix_ekf_correct(&filter, 80.0, 150.0);
     int state_changed = memcmp(&filter, &before, sizeof(filter)) != 0;
     if (divergent_status == STARFIX_ERR_EKF_DIVERGENCE && !state_changed) {
         printf("Passed\n");
     } else {
         printf("FAILED (status=%d, state changed=%d)\n", divergent_status, state_changed);
     }
+
+    printf("Test 6: Longitude boundaries and crossings... ");
+    int wrapped = 1;
+    for (int sign = -1; sign <= 1; sign += 2) {
+        starfix_ekf_init(&filter, 0, sign * 180.0);
+        wrapped &= starfix_ekf_predict(&filter, 0, 0, 1) == STARFIX_SUCCESS;
+        wrapped &= starfix_ekf_correct(&filter, 0, sign * 180.0) == STARFIX_SUCCESS;
+        wrapped &= fabs(filter.lon - sign * 180.0) < 1e-12;
+        starfix_ekf_init(&filter, 0, sign * 179.75);
+        wrapped &= starfix_ekf_predict(&filter, 60, sign * 90.0, 3600) == STARFIX_SUCCESS;
+        wrapped &= fabs(filter.lon + sign * 179.25) < 1e-12;
+        starfix_ekf_init(&filter, 0, sign * 179.9);
+        wrapped &= starfix_ekf_correct(&filter, 0, -sign * 179.9) == STARFIX_SUCCESS;
+        wrapped &= fabs(filter.lon + sign * 179.9) < 0.01;
+    }
+    printf(wrapped ? "Passed\n" : "FAILED (longitude wrap)\n");
 
     return 0;
 }

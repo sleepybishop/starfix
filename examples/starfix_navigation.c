@@ -51,8 +51,7 @@ static int do_fuse_ekf() {
         if ((step + 1) % 120 == 0) {
             double n_lat = (rand() / (double)RAND_MAX - 0.5) * 0.08; /* ~3.5 nm error */
             double n_lon = (rand() / (double)RAND_MAX - 0.5) * 0.08;
-            starfix_telemetry_t telem = {0};
-            starfix_ekf_correct(&ekf, cur_true_lat + n_lat, cur_true_lon + n_lon, &telem);
+            starfix_ekf_correct(&ekf, cur_true_lat + n_lat, cur_true_lon + n_lon);
         }
     }
 
@@ -138,11 +137,10 @@ static int do_fuse_graph() {
 
     double est_scale = 1.0;
     double est_bias = 0.0;
-    starfix_telemetry_t telem = {0};
 
     starfix_status_t status =
         starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, odom, num_fixes,
-                            fixes, poses, &est_scale, &est_bias, arena, &telem);
+                            fixes, poses, &est_scale, &est_bias, arena);
 
     if (status == STARFIX_SUCCESS) {
         double err_lat = poses[num_nodes].lat - true_lats[num_nodes];

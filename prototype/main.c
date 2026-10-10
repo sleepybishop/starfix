@@ -61,13 +61,13 @@ int main(void) {
     time_t t_now = time(NULL);
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
-    starfix_propagate_astrometry(db.stars, db.num_stars, current_year, NULL);
+    starfix_propagate_astrometry(db.stars, db.num_stars, current_year);
 
     /* Initialize EKF */
     starfix_ekf_t ekf;
     starfix_ekf_init(&ekf, 0.0, 0.0); /* Init at 0,0 for testing */
 
-    double focal_length = CAM_WIDTH / (2.0 * tan((FOV_DEG * M_PI / 180.0) / 2.0));
+    double focal_length = starfix_focal_length(CAM_WIDTH, FOV_DEG);
 
     /* Main run loop */
     printf("Entering main tracking loop...\n");
@@ -118,25 +118,15 @@ int main(void) {
             int c_idx = matches[i].centroid_idx;
             int cat_idx = matches[i].catalog_idx;
 
-            double cx = (centroids[c_idx].u - CAM_WIDTH / 2.0) / focal_length;
-            double cy = (centroids[c_idx].v - CAM_HEIGHT / 2.0) / focal_length;
-            double norm = sqrt(cx * cx + cy * cy + 1.0);
-            cam_vecs[i].x = cx / norm;
-            cam_vecs[i].y = cy / norm;
-            cam_vecs[i].z = 1.0 / norm;
-
-            double dec_s = db.stars[cat_idx].dec;
-            double ra_s = db.stars[cat_idx].ra;
-            cat_vecs[i].x = cos(dec_s) * cos(ra_s);
-            cat_vecs[i].y = cos(dec_s) * sin(ra_s);
-            cat_vecs[i].z = sin(dec_s);
+            cam_vecs[i] = starfix_camera_ray(centroids[c_idx].u - CAM_WIDTH / 2.0,
+                                             centroids[c_idx].v - CAM_HEIGHT / 2.0, focal_length);
+            cat_vecs[i] = starfix_celestial_ray(db.stars[cat_idx].ra, db.stars[cat_idx].dec);
         }
 
-        starfix_quaternion_t q_est;
         double R_est[3][3];
 
-        int inliers = starfix_solve_attitude_ransac(num_matches, cam_vecs, cat_vecs, 0.1, &q_est,
-                                                    R_est, arena);
+        int inliers =
+            starfix_solve_attitude_ransac(num_matches, cam_vecs, cat_vecs, 0.1, R_est, arena);
 
         if (inliers < 0) {
             printf("Frame %d: Attitude solve failed.\n", frame_count);
@@ -152,7 +142,7 @@ int main(void) {
             starfix_solve_position(1, &imu_zenith, R_est, &gha_aries, &solved_lat, &solved_lon);
 
         if (pos_stat == STARFIX_SUCCESS) {
-            starfix_ekf_correct(&ekf, solved_lat, solved_lon, NULL);
+            starfix_ekf_correct(&ekf, solved_lat, solved_lon);
             printf("Frame %d: Pos FIX [Lat: %.4f, Lon: %.4f] (Inliers: %d)\n", frame_count,
                    solved_lat, solved_lon, inliers);
         } else {

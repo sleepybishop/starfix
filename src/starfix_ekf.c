@@ -11,6 +11,13 @@
 
 static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 
+/* preserve both endpoints: -180 stays -180 and +180 stays +180 */
+static double wrap_longitude(double lon) {
+    while (lon > 180.0) lon -= 360.0;
+    while (lon < -180.0) lon += 360.0;
+    return lon;
+}
+
 starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double init_lon) {
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
@@ -19,34 +26,19 @@ starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double
         init_lon < -180.0 || init_lon > 180.0) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    int i, j;
-
-    filter->lat = init_lat;
-    filter->lon = init_lon;
-    filter->scale = 1.0;
-    filter->bias = 0.0;
-
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
-            filter->P[i][j] = 0.0;
-        }
-    }
-
-    /* initial state uncertainties: lat/lon ~0.5 deg, scale ~0.15, bias ~10 deg */
-    filter->P[0][0] = 0.5 * 0.5;
-    filter->P[1][1] = 0.5 * 0.5;
-    filter->P[2][2] = 0.15 * 0.15;
-    filter->P[3][3] = deg_to_rad(10.0) * deg_to_rad(10.0);
-
-    filter->Q[0] = 1e-12; /* lat drift variance per step */
-    filter->Q[1] = 1e-12; /* lon drift variance per step */
-    filter->Q[2] = 1e-10; /* scale factor drift variance */
-    filter->Q[3] = 3e-8;  /* heading bias drift variance */
-
-    /* measurement noise R (3.5 nm default fix error) */
     double noise_deg = 3.5 / 60.0;
-    filter->R[0] = noise_deg * noise_deg;
-    filter->R[1] = noise_deg * noise_deg;
+    /* initial uncertainty: 0.5 degrees position, 0.15 speed scale, 10 degrees heading */
+    *filter = (starfix_ekf_t){
+        .lat = init_lat,
+        .lon = init_lon,
+        .scale = 1.0,
+        .P = {{0.5 * 0.5, 0, 0, 0},
+              {0, 0.5 * 0.5, 0, 0},
+              {0, 0, 0.15 * 0.15, 0},
+              {0, 0, 0, deg_to_rad(10.0) * deg_to_rad(10.0)}},
+        .Q = {1e-12, 1e-12, 1e-10, 3e-8},
+        .R = {noise_deg * noise_deg, noise_deg * noise_deg},
+    };
     return STARFIX_SUCCESS;
 }
 
@@ -70,9 +62,7 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     double pred_d_lon = dist_nm * sin(corrected_heading) / (60.0 * cos(lat_rad));
 
     filter->lat += pred_d_lat;
-    filter->lon += pred_d_lon;
-    while (filter->lon > 180.0) filter->lon -= 360.0;
-    while (filter->lon < -180.0) filter->lon += 360.0;
+    filter->lon = wrap_longitude(filter->lon + pred_d_lon);
 
     double F[4][4] = {
         {1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}, {0.0, 0.0, 1.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
@@ -112,7 +102,7 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
 }
 
 starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat,
-                                     double celestial_lon, starfix_telemetry_t* telem) {
+                                     double celestial_lon) {
     if (filter == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
@@ -151,12 +141,9 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
 
     double y[2];
     y[0] = celestial_lat - filter->lat;
-    y[1] = celestial_lon - filter->lon;
-    while (y[1] > 180.0) y[1] -= 360.0;
-    while (y[1] < -180.0) y[1] += 360.0;
+    y[1] = wrap_longitude(celestial_lon - filter->lon);
 
     double inno_norm = y[0] * y[0] + y[1] * y[1];
-    if (telem) telem->ekf_innovation_norm = inno_norm;
     if (inno_norm > 10.0) return STARFIX_ERR_EKF_DIVERGENCE;
 
     /* Gate the measurement before mutating the filter so a rejected update is atomic. */
@@ -164,8 +151,7 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     filter->lon += K[1][0] * y[0] + K[1][1] * y[1];
     filter->scale += K[2][0] * y[0] + K[2][1] * y[1];
     filter->bias += K[3][0] * y[0] + K[3][1] * y[1];
-    while (filter->lon > 180.0) filter->lon -= 360.0;
-    while (filter->lon < -180.0) filter->lon += 360.0;
+    filter->lon = wrap_longitude(filter->lon);
 
     /* H selects lat/lon; form each coefficient of I - K H as needed */
     for (i = 0; i < 4; i++) {

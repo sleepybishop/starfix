@@ -217,9 +217,8 @@ int main() {
             v_vecs[i].y = cos(dec_s) * sin(ra_s);
             v_vecs[i].z = sin(dec_s);
         }
-        starfix_quaternion_t q_sol;
         double R_hint[3][3];
-        starfix_solve_attitude(m_cnt, w_vecs, v_vecs, &q_sol, R_hint);
+        starfix_solve_attitude(m_cnt, w_vecs, v_vecs, R_hint);
 
         starfix_match_t track_matches[20];
         int track_ret = starfix_identify_stars(count, centroids, 1024, 1024, 12.0, &db, 20,
@@ -257,7 +256,7 @@ int main() {
     dummy_cat[0].dec = 0.0;
     dummy_cat[0].mag = 2.0;
 
-    int prec_status = starfix_propagate_astrometry(dummy_cat, 1, 2100.0, NULL);
+    int prec_status = starfix_propagate_astrometry(dummy_cat, 1, 2100.0);
 
     /* Expected offsets using exact IAU 1976 Precession Matrix:
        T = 1.0 */
