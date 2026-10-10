@@ -1,5 +1,8 @@
 #include "starfix_cli_io.h"
 
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +11,35 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+static const char* skip_space(const char* text) {
+    while (isspace((unsigned char)*text)) text++;
+    return text;
+}
+
+const char* parse_double(const char* text, double* value) {
+    char* end;
+    errno = 0;
+    double number = strtod(text, &end);
+    if (end == text || errno == ERANGE || !isfinite(number)) return NULL;
+    *value = number;
+    return skip_space(end);
+}
+
+const char* parse_int(const char* text, int low, int high, int* value) {
+    char* end;
+    errno = 0;
+    long number = strtol(text, &end, 10);
+    if (end == text || errno == ERANGE || number < low || number > high) return NULL;
+    *value = (int)number;
+    return skip_space(end);
+}
+
+static int close_output(FILE* f) {
+    int failed = ferror(f);
+    if (fclose(f) != 0) failed = 1;
+    return failed ? -1 : 0;
+}
 
 void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec_deg,
                                double* roll_deg) {
@@ -86,8 +118,7 @@ int write_centroids_json(const char* path, const starfix_centroid_t* centroids, 
         fprintf(f, "  }%s\n", (i == count - 1) ? "" : ",");
     }
     fprintf(f, "]\n");
-    fclose(f);
-    return 0;
+    return close_output(f);
 }
 
 static int read_text(const char* path, char** text) {
@@ -126,9 +157,12 @@ static char* next_object(char** cursor) {
 
 static const char* json_value(const char* object, const char* key, const char* fallback) {
     const char* value = strstr(object, key);
-    if (value) value = strchr(value, ':');
-    return value ? value + 1 : fallback;
+    if (!value) return fallback;
+    value = skip_space(value + strlen(key));
+    return *value == ':' ? value + 1 : fallback;
 }
+
+static int json_number_end(const char* end) { return end && (*end == '\0' || *end == ','); }
 
 int read_centroids_json(const char* path, starfix_centroid_t* centroids, int max_count) {
     char* text;
@@ -138,13 +172,15 @@ int read_centroids_json(const char* path, starfix_centroid_t* centroids, int max
     char* cursor = text;
     char* object;
     while (count < max_count && (object = next_object(&cursor))) {
-        double u = atof(json_value(object, "\"u\"", "-1"));
-        double v = atof(json_value(object, "\"v\"", "-1"));
+        double u, v, flux;
+        if (!json_number_end(parse_double(json_value(object, "\"u\"", "-1"), &u)) ||
+            !json_number_end(parse_double(json_value(object, "\"v\"", "-1"), &v)) ||
+            !json_number_end(parse_double(json_value(object, "\"flux\"", "0"), &flux))) {
+            count = STARFIX_ERR_DATA_CORRUPTION;
+            break;
+        }
         if (!(u >= 0.0 && v >= 0.0)) continue;
-        centroids[count].u = u;
-        centroids[count].v = v;
-        centroids[count].flux = atof(json_value(object, "\"flux\"", "0"));
-        count++;
+        centroids[count++] = (starfix_centroid_t){.u = u, .v = v, .flux = flux};
     }
     free(text);
     return count;
@@ -169,8 +205,7 @@ int write_identified_json(const char* path, const starfix_match_t* matches, int 
         fprintf(f, "  }%s\n", (i == count - 1) ? "" : ",");
     }
     fprintf(f, "]\n");
-    fclose(f);
-    return 0;
+    return close_output(f);
 }
 
 int read_identified_json(const char* path, starfix_match_t* matches, int max_count) {
@@ -181,8 +216,14 @@ int read_identified_json(const char* path, starfix_match_t* matches, int max_cou
     char* cursor = text;
     char* object;
     while (count < max_count && (object = next_object(&cursor))) {
-        int centroid = atoi(json_value(object, "\"centroid_idx\"", "-1"));
-        int catalog = atoi(json_value(object, "\"catalog_idx\"", "-1"));
+        int centroid, catalog;
+        if (!json_number_end(parse_int(json_value(object, "\"centroid_idx\"", "-1"), INT_MIN,
+                                       INT_MAX, &centroid)) ||
+            !json_number_end(parse_int(json_value(object, "\"catalog_idx\"", "-1"), INT_MIN,
+                                       INT_MAX, &catalog))) {
+            count = STARFIX_ERR_DATA_CORRUPTION;
+            break;
+        }
         if (centroid < 0 || catalog < 0) continue;
         matches[count++] = (starfix_match_t){centroid, catalog};
     }

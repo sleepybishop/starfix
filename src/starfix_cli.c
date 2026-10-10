@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,12 @@
 #include "starfix_photo.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
+
+static int numeric_argument(const char* text, const char* end) {
+    if (end && !*end) return 1;
+    fprintf(stderr, "Invalid numeric argument: %s\n", text);
+    return 0;
+}
 
 static double current_year(void) {
     time_t now = time(NULL);
@@ -50,7 +57,10 @@ static int do_centroid(int threshold) {
     }
 
     printf("Detected %d star centroids.\n", count);
-    write_centroids_json("data/detected_centroids.json", centroids, count);
+    if (write_centroids_json("data/detected_centroids.json", centroids, count) < 0) {
+        fprintf(stderr, "Could not write data/detected_centroids.json.\n");
+        return 1;
+    }
     return 0;
 }
 
@@ -89,7 +99,10 @@ static int do_identify(int width, int height, double fov_deg, double observation
                db.stars[cat_idx].ra * 180.0 / M_PI, db.stars[cat_idx].dec * 180.0 / M_PI);
     }
 
-    write_identified_json("data/identified_stars.json", matches, match_count, db.stars);
+    if (write_identified_json("data/identified_stars.json", matches, match_count, db.stars) < 0) {
+        fprintf(stderr, "Could not write data/identified_stars.json.\n");
+        goto done;
+    }
     printf("Saved %d identified stars to data/identified_stars.json\n", match_count);
 
     result = 0;
@@ -105,7 +118,7 @@ static int do_solve_photo(const starfix_photo_options_t* options, double year, i
 
     starfix_centroid_t centroids[1000];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 1000);
-    if (cent_count <= 0) {
+    if (cent_count == -1) {
         cent_count = read_centroids_json("../data/detected_centroids.json", centroids, 1000);
     }
     if (cent_count <= 0) {
@@ -115,7 +128,7 @@ static int do_solve_photo(const starfix_photo_options_t* options, double year, i
 
     starfix_match_t matches[1000];
     int match_count = read_identified_json("data/identified_stars.json", matches, 1000);
-    if (match_count <= 0) {
+    if (match_count == -1) {
         match_count = read_identified_json("../data/identified_stars.json", matches, 1000);
     }
     if (match_count < 3) {
@@ -163,7 +176,7 @@ int main(int argc, char** argv) {
         printf("StarFix Native C Command-Line Interface\n");
         printf("Usage: %s [option]\n", argv[0]);
         printf("Options:\n");
-        printf("  --centroid       Extract sub-pixel star centroids from raw PGM image\n");
+        printf("  --centroid [threshold]  Extract star centroids; threshold is 0 to 255\n");
         printf("  --identify [width height fov observation_year]\n");
         printf("                   Match detected centroids to database catalog quads\n");
         printf("  --fit-photo <g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size]\n");
@@ -175,13 +188,26 @@ int main(int argc, char** argv) {
     }
 
     if (strcmp(argv[1], "--centroid") == 0) {
-        int threshold = (argc >= 3) ? atoi(argv[2]) : 35;
+        if (argc > 3) {
+            fprintf(stderr, "Usage: %s --centroid [threshold]\n", argv[0]);
+            return 1;
+        }
+        int threshold = 35;
+        if (argc == 3 && !numeric_argument(argv[2], parse_int(argv[2], 0, 255, &threshold)))
+            return 1;
         return do_centroid(threshold);
     } else if (strcmp(argv[1], "--identify") == 0) {
-        int w = (argc >= 3) ? atoi(argv[2]) : 1024;
-        int h = (argc >= 4) ? atoi(argv[3]) : 1024;
-        double fov = (argc >= 5) ? atof(argv[4]) : 12.0;
-        double observation_year = argc >= 6 ? atof(argv[5]) : current_year();
+        if (argc > 6) {
+            fprintf(stderr, "Usage: %s --identify [width height fov observation_year]\n", argv[0]);
+            return 1;
+        }
+        int w = 1024, h = 1024;
+        double fov = 12.0, observation_year = current_year();
+        if ((argc >= 3 && !numeric_argument(argv[2], parse_int(argv[2], 1, INT_MAX, &w))) ||
+            (argc >= 4 && !numeric_argument(argv[3], parse_int(argv[3], 1, INT_MAX, &h))) ||
+            (argc >= 5 && !numeric_argument(argv[4], parse_double(argv[4], &fov))) ||
+            (argc >= 6 && !numeric_argument(argv[5], parse_double(argv[5], &observation_year))))
+            return 1;
         return do_identify(w, h, fov, observation_year);
     } else if (strcmp(argv[1], "--solve-photo") == 0 || strcmp(argv[1], "--fit-photo") == 0) {
         int attitude_only = strcmp(argv[1], "--fit-photo") == 0;
@@ -191,15 +217,19 @@ int main(int argc, char** argv) {
                    argv[0], argv[1], attitude_only ? "" : "<gha_aries> ");
             return 1;
         }
-        double year = argc > first + 4 ? atof(argv[first + 4]) : current_year();
-        double size = argc > first + 5 ? atof(argv[first + 5]) : 560.0;
-        starfix_photo_options_t options = {
-            .width = size,
-            .height = size,
-            .fov_deg = argc > first + 3 ? atof(argv[first + 3]) : 11.28,
-            .gha_aries = attitude_only ? 0.0 : atof(argv[2]),
-            .zenith_camera = {atof(argv[first]), atof(argv[first + 1]), atof(argv[first + 2])},
-        };
+        double year = current_year();
+        starfix_photo_options_t options = {.width = 560.0, .fov_deg = 11.28};
+        double* fields[] = {&options.gha_aries,
+                            &options.zenith_camera.x,
+                            &options.zenith_camera.y,
+                            &options.zenith_camera.z,
+                            &options.fov_deg,
+                            &year,
+                            &options.width};
+        int offset = attitude_only ? 1 : 0;
+        for (int i = 2; i < argc; i++)
+            if (!numeric_argument(argv[i], parse_double(argv[i], fields[i - 2 + offset]))) return 1;
+        options.height = options.width;
         return do_solve_photo(&options, year, attitude_only);
     } else {
         printf("Invalid option: %s\n", argv[1]);

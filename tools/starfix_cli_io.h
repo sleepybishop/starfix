@@ -3,6 +3,10 @@
 
 #include "starfix_identify.h"
 
+/* parse finite numbers; return the first non-space suffix, or NULL on invalid input */
+const char* parse_double(const char* text, double* value);
+const char* parse_int(const char* text, int low, int high, int* value);
+
 void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec_deg,
                                double* roll_deg);
 unsigned char* read_pgm(const char* path, int* width, int* height);
