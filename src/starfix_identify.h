@@ -45,7 +45,7 @@ void starfix_free_db(starfix_db_t* db);
 /* propagate J2000 coordinates to year */
 int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year);
 
-/* return up to max_matches matches (>= 3), or a negative error; hashes must be sorted.
+/* return up to max_matches (>= 3) matches, or a negative error; blind hashes must be sorted.
  * fov_deg is horizontal; camera axes are +X right, +Y down, +Z forward.
  * blind matching needs a quad plus an independent fifth star; tracking needs three matches */
 int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroids, double width,

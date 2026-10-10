@@ -3,20 +3,18 @@
 #include <stdlib.h>
 
 #include "starfix_arena.h"
+#include "starfix_graph.h"
 #include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
-#include "starfix_graph.h"
-
-/* test runner to verify the C implementation of the Factor Graph solver */
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-int main() {
+int main(void) {
+    int failures = 0;
     printf("--- Running Factor Graph Comprehensive Tests ---\n");
 
     int num_nodes = 50;
@@ -40,6 +38,7 @@ int main() {
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
     }
 
@@ -124,10 +123,12 @@ int main() {
             printf("  Estimated Heading Bias:    %f deg (True: 4.0 deg)\n",
                    est_bias * 180.0 / M_PI);
         } else {
+            failures++;
             printf("FAILED (large error: dist_err=%f nm, scale_err=%f, bias_err=%f deg)\n",
                    dist_err_nm, err_scale, err_bias);
         }
     } else {
+        failures++;
         printf("FAILED (solver returned %d)\n", status);
     }
 
@@ -158,6 +159,7 @@ int main() {
         fabs(large_bias) < 1e-12) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (status=%d)\n", large_status);
     }
     free(large_odom);
@@ -168,5 +170,5 @@ int main() {
     free(fixes);
     free(true_lats);
     free(true_lons);
-    return 0;
+    return failures ? 1 : 0;
 }

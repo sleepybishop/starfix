@@ -6,14 +6,14 @@
 typedef struct {
     double u;       /* sub-pixel horizontal coordinate */
     double v;       /* sub-pixel vertical coordinate */
-    double peak;    /* peak intensity value */
-    double flux;    /* integrated intensity (brightness) */
+    double peak;    /* peak intensity above threshold */
+    double flux;    /* summed intensity above threshold */
     int num_pixels; /* component size in pixels */
 } starfix_centroid_t;
 
 /* find flux-weighted centroids in a row-major byte image, subtracting threshold from intensity.
- * centroids holds max_centroids; optional visited_mask has width * height generation entries.
- * frame_number zero clears/restarts the mask.
+ * keep the first max_centroids components, sorted by flux; visited_mask has width * height entries.
+ * visited_mask is optional; frame_number zero clears/restarts it.
  * returns the count (up to max_centroids) or a negative error */
 int starfix_find_centroids(const unsigned char* image, int width, int height,
                            unsigned char threshold, int max_centroids,

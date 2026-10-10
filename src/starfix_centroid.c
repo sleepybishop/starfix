@@ -38,7 +38,7 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
                            starfix_centroid_t* centroids, uint32_t* visited_mask,
                            uint32_t frame_number) {
     if (image == NULL || centroids == NULL) {
-        return STARFIX_ERR_CENTROID_BUFFER_FULL;
+        return STARFIX_ERR_NULL_POINTER;
     }
     if (width <= 0 || height <= 0 || max_centroids <= 0) {
         return STARFIX_ERR_INVALID_PARAM;
@@ -47,7 +47,6 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
         return STARFIX_ERR_INVALID_PARAM;
     }
     int count = 0;
-    int x, y, dx, dy;
 
     uint32_t* visited = visited_mask;
     if (visited == NULL) {
@@ -63,8 +62,8 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
     int queue_x[MAX_BLOB_PIXELS];
     int queue_y[MAX_BLOB_PIXELS];
 
-    for (y = 0; y < height; y++) {
-        for (x = 0; x < width; x++) {
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
             int idx = y * width + x;
 
             if (image[idx] <= threshold || visited[idx] == frame_number) continue;
@@ -99,8 +98,8 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
                 }
 
                 /* check 8-connected neighbors */
-                for (dy = -1; dy <= 1; dy++) {
-                    for (dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
                         int nx = cx + dx;
                         int ny = cy + dy;
 
@@ -134,24 +133,16 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
 
 int starfix_calibrate_hot_pixels(const unsigned char* dark_image, int width, int height,
                                  unsigned char threshold, int max_hot, int* hot_u, int* hot_v) {
-    if (dark_image == NULL || hot_u == NULL || hot_v == NULL || width <= 0 || height <= 0 ||
-        max_hot <= 0) {
-        return STARFIX_ERR_NULL_POINTER;
-    }
+    if (!dark_image || !hot_u || !hot_v) return STARFIX_ERR_NULL_POINTER;
+    if (width <= 0 || height <= 0 || width > INT_MAX / height || max_hot <= 0)
+        return STARFIX_ERR_INVALID_PARAM;
 
     int count = 0;
-    int u, v;
-    for (v = 0; v < height; v++) {
-        for (u = 0; u < width; u++) {
-            if (dark_image[v * width + u] > threshold) {
-                if (count < max_hot) {
-                    hot_u[count] = u;
-                    hot_v[count] = v;
-                    count++;
-                } else {
-                    return count; /* reached capacity limit */
-                }
-            }
+    for (int v = 0; v < height && count < max_hot; v++) {
+        for (int u = 0; u < width && count < max_hot; u++) {
+            if (dark_image[v * width + u] <= threshold) continue;
+            hot_u[count] = u;
+            hot_v[count++] = v;
         }
     }
     return count;
@@ -159,15 +150,11 @@ int starfix_calibrate_hot_pixels(const unsigned char* dark_image, int width, int
 
 int starfix_apply_hot_pixel_mask(unsigned char* image, int width, int height, int num_hot,
                                  const int* hot_u, const int* hot_v) {
-    if (image == NULL || hot_u == NULL || hot_v == NULL || width <= 0 || height <= 0) {
-        return STARFIX_ERR_NULL_POINTER;
-    }
-    if (num_hot < 0) {
-        return STARFIX_ERR_CENTROID_BUFFER_FULL;
-    }
+    if (!image || !hot_u || !hot_v) return STARFIX_ERR_NULL_POINTER;
+    if (width <= 0 || height <= 0 || width > INT_MAX / height || num_hot < 0)
+        return STARFIX_ERR_INVALID_PARAM;
 
-    int i;
-    for (i = 0; i < num_hot; i++) {
+    for (int i = 0; i < num_hot; i++) {
         int u = hot_u[i];
         int v = hot_v[i];
         if (u >= 0 && u < width && v >= 0 && v < height) {

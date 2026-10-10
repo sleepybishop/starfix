@@ -10,19 +10,19 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* test runner to verify the C EKF implementation under multiple conditions */
-
-int main() {
+int main(void) {
+    int failures = 0;
     starfix_ekf_t filter;
 
     printf("--- Running EKF Comprehensive Tests ---\n");
 
     /* 1. NULL Pointer Validation */
     printf("Test 1: NULL pointer robustness... ");
-    starfix_ekf_init(NULL, 34.0, -118.0);
-    starfix_ekf_predict(NULL, 10.0, 45.0, 10.0);
-    starfix_ekf_correct(NULL, 34.0, -118.0);
-    printf("Passed (no crash)\n");
+    int null_ok = starfix_ekf_init(NULL, 34.0, -118.0) == STARFIX_ERR_NULL_POINTER &&
+                  starfix_ekf_predict(NULL, 10.0, 45.0, 10.0) == STARFIX_ERR_NULL_POINTER &&
+                  starfix_ekf_correct(NULL, 34.0, -118.0) == STARFIX_ERR_NULL_POINTER;
+    if (!null_ok) failures++;
+    printf(null_ok ? "Passed\n" : "FAILED (wrong null-pointer status)\n");
 
     /* 2. Happy Path Initialization & DR Propagation */
     printf("Test 2: Happy path propagation... ");
@@ -43,6 +43,7 @@ int main() {
         printf("Passed\n");
         printf("  Lat = %f, Lon = %f\n", filter.lat, filter.lon);
     } else {
+        failures++;
         printf("FAILED\n");
         printf("  Got Lat = %f, Lon = %f\n", filter.lat, filter.lon);
     }
@@ -59,6 +60,7 @@ int main() {
         printf("  Estimated: Scale = %f, Bias = %f deg\n", filter.scale,
                filter.bias * 180.0 / M_PI);
     } else {
+        failures++;
         printf("FAILED\n");
         printf("  Got Lat = %f, Lon = %f\n", filter.lat, filter.lon);
     }
@@ -76,6 +78,7 @@ int main() {
     if (fabs(filter.lat - old_lat) < 1e-6 && fabs(filter.lon - old_lon) < 1e-6) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (moved too much: %f, %f)\n", filter.lat - old_lat, filter.lon - old_lon);
     }
 
@@ -88,6 +91,7 @@ int main() {
     if (divergent_status == STARFIX_ERR_EKF_DIVERGENCE && !state_changed) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (status=%d, state changed=%d)\n", divergent_status, state_changed);
     }
 
@@ -105,7 +109,8 @@ int main() {
         wrapped &= starfix_ekf_correct(&filter, 0, -sign * 179.9) == STARFIX_SUCCESS;
         wrapped &= fabs(filter.lon + sign * 179.9) < 0.01;
     }
+    if (!wrapped) failures++;
     printf(wrapped ? "Passed\n" : "FAILED (longitude wrap)\n");
 
-    return 0;
+    return failures ? 1 : 0;
 }

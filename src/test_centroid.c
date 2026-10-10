@@ -6,9 +6,8 @@
 #include "starfix_centroid.h"
 #include "starfix_status.h"
 
-/* test runner to verify the C centroiding implementation under multiple conditions */
-
-int main() {
+int main(void) {
+    int failures = 0;
     printf("--- Running Centroid Comprehensive Tests ---\n");
 
     int width = 128;
@@ -30,6 +29,7 @@ int main() {
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Test 1: Boundary check... Passed\n");
     } else {
+        failures++;
         printf("Test 1: Boundary check... FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
     }
 
@@ -42,6 +42,7 @@ int main() {
     if (count_black == 0) {
         printf("Test 2: Black image (no stars)... Passed\n");
     } else {
+        failures++;
         printf("Test 2: Black image (no stars)... FAILED (detected %d centroids)\n", count_black);
     }
 
@@ -86,12 +87,14 @@ int main() {
         if (err0 < 0.1 && err1 < 0.1) {
             printf("Test 3: Happy path multi-star detection... Passed\n");
         } else {
+            failures++;
             printf(
                 "Test 3: Happy path multi-star detection... FAILED (large subpixel error: %.4f, "
                 "%.4f)\n",
                 err0, err1);
         }
     } else {
+        failures++;
         printf(
             "Test 3: Happy path multi-star detection... FAILED (detected %d centroids, expected "
             "2)\n",
@@ -110,6 +113,7 @@ int main() {
     if (count_giant == 2) {
         printf("Test 4: Giant saturated blob rejection... Passed\n");
     } else {
+        failures++;
         printf("Test 4: Giant saturated blob rejection... FAILED (count = %d, expected 2)\n",
                count_giant);
     }
@@ -152,10 +156,12 @@ int main() {
             fabs(centroids[0].v - 50.295) < 0.1) {
             printf("Passed\n");
         } else {
+            failures++;
             printf("FAILED (status=%d, count_masked=%d, u=%.2f, v=%.2f)\n", mask_status,
                    count_masked, centroids[0].u, centroids[0].v);
         }
     } else {
+        failures++;
         printf("FAILED (calibration found %d hot pixels, expected 3)\n", num_hot);
     }
 
@@ -170,6 +176,7 @@ int main() {
     if (zero_count == 1) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (count=%d)\n", zero_count);
     }
     free(visited);
@@ -181,9 +188,10 @@ int main() {
     if (limited_count == 1 && limited[1].num_pixels == -1) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (count=%d)\n", limited_count);
     }
 
     free(image);
-    return 0;
+    return failures ? 1 : 0;
 }

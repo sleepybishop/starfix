@@ -1,33 +1,32 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "starfix_arena.h"
+#include "starfix_attitude.h"
+#include "starfix_identify.h"
 #include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
-#include <string.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-#include "starfix_attitude.h"
-#include "starfix_identify.h"
-
-/* test runner to verify the C implementation of the TETRA Star ID module */
-
-int main() {
+int main(void) {
+    int failures = 0;
     printf("--- Running Star Identification (TETRA) Comprehensive Tests ---\n");
 
     /* 1. NULL parameter validations */
     printf("Test 1: Sizing and NULL validations... ");
     starfix_match_t matches[10];
     int ret1 = starfix_identify_stars(0, NULL, 1024, 1024, 12.0, NULL, 10, matches, arena, NULL);
-    if (ret1 == -1) {
+    if (ret1 == STARFIX_ERR_NULL_POINTER) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (got %d)\n", ret1);
     }
 
@@ -41,6 +40,7 @@ int main() {
         printf("  Loaded %d catalog stars and %d hash entries (bin factor: %d)\n", db.num_stars,
                db.num_hashes, db.bins);
     } else {
+        failures++;
         printf("FAILED (load status: %d, stars: %d, entries: %d)\n", db_status, db.num_stars,
                db.num_hashes);
         return -1;
@@ -73,6 +73,7 @@ int main() {
         corrupt.bins == 0) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (status=%d)\n", corrupt_status);
         starfix_free_db(&corrupt);
     }
@@ -83,6 +84,7 @@ int main() {
     /* Parse mock centroids from data/mock_centroids.json using simple string parsing */
     FILE* f = fopen("data/mock_centroids.json", "r");
     if (f == NULL) {
+        failures++;
         printf("FAILED (cannot open data/mock_centroids.json)\n");
         starfix_free_db(&db);
         return -1;
@@ -148,6 +150,7 @@ int main() {
     }
 
     if (count < 4) {
+        failures++;
         printf("FAILED (too few mock centroids parsed: %d)\n", count);
         starfix_free_db(&db);
         return -1;
@@ -191,6 +194,7 @@ int main() {
         int quad_status =
             starfix_identify_stars(4, centroids, 1024, 1024, 12.0, &db, 3, limited, arena, NULL);
         if (!fallback_ok || quad_status != STARFIX_ERR_IDENTIFY_NO_MATCH) {
+            failures++;
             printf("FAILED (fallback=%d, quad=%d)\n", fallback_status, quad_status);
             return -1;
         }
@@ -234,14 +238,17 @@ int main() {
             if (unique) {
                 printf("Passed (%d unique matches in tracking mode!)\n", track_ret);
             } else {
+                failures++;
                 printf("FAILED (tracking mode reused a centroid)\n");
                 return -1;
             }
         } else {
+            failures++;
             printf("FAILED (tracking mode matched %d stars)\n", track_ret);
             return -1;
         }
     } else {
+        failures++;
         printf("FAILED (matched only %d stars)\n", ret);
         return -1;
     }
@@ -267,6 +274,7 @@ int main() {
         fabs(dummy_cat[0].ra - expected_d_ra) < 1e-4) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (status=%d, ra=%f (exp=%f), dec=%f (exp=%f))\n", prec_status,
                dummy_cat[0].ra, expected_d_ra, dummy_cat[0].dec, expected_d_dec);
     }
@@ -276,9 +284,10 @@ int main() {
     if (db.stars || db.hashes || db.num_stars || db.num_hashes || db.bins ||
         starfix_load_db(NULL, &db) != STARFIX_ERR_NULL_POINTER ||
         starfix_load_db("data/starfix_db.bin", &db) != STARFIX_SUCCESS) {
+        failures++;
         printf("FAILED (database cleanup and reload)\n");
         return -1;
     }
     starfix_free_db(&db);
-    return 0;
+    return failures ? 1 : 0;
 }

@@ -76,22 +76,21 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
 
     /* propagate covariance: P_next = F * P * F^T + Q */
     double FP[4][4];
-    int i, j, k;
 
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             FP[i][j] = 0.0;
-            for (k = 0; k < 4; k++) {
+            for (int k = 0; k < 4; k++) {
                 FP[i][j] += F[i][k] * filter->P[k][j];
             }
         }
     }
 
     /* compute P = FP * F^T + Q */
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             double val = 0.0;
-            for (k = 0; k < 4; k++) {
+            for (int k = 0; k < 4; k++) {
                 val += FP[i][k] * F[j][k];
             }
             filter->P[i][j] = val;
@@ -114,7 +113,6 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     double S_inv[2][2];
     double K[4][2];
     double P_next[4][4];
-    int i, j, k;
 
     /* H selects lat/lon, so S is the top-left 2x2 of P plus R */
     S[0][0] = filter->P[0][0] + filter->R[0];
@@ -133,8 +131,8 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     S_inv[1][1] = S[0][0] / det;
 
     /* K = P H^T S^-1, using the first two columns of P */
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 2; j++) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 2; j++) {
             K[i][j] = filter->P[i][0] * S_inv[0][j] + filter->P[i][1] * S_inv[1][j];
         }
     }
@@ -154,10 +152,10 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     filter->lon = wrap_longitude(filter->lon);
 
     /* H selects lat/lon; form each coefficient of I - K H as needed */
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             P_next[i][j] = 0.0;
-            for (k = 0; k < 4; k++) {
+            for (int k = 0; k < 4; k++) {
                 double coefficient = (i == k ? 1.0 : 0.0) - (k < 2 ? K[i][k] : 0.0);
                 P_next[i][j] += coefficient * filter->P[k][j];
             }
@@ -165,8 +163,8 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     }
 
     /* copy back to P and symmetrize */
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             filter->P[i][j] = (P_next[i][j] + P_next[j][i]) / 2.0;
         }
     }

@@ -21,22 +21,20 @@ static void rotate(double* a, double* b, double c, double s) {
 
 /* jacobi decomposition: destroys A; V holds eigenvectors as columns */
 static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
-    int i, j, ip, iq;
-    double c, s, t, theta, h, g, thresh;
     double b[4], z[4];
 
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             V[i][j] = (i == j) ? 1.0 : 0.0;
         }
         b[i] = d[i] = A[i][i];
         z[i] = 0.0;
     }
 
-    for (i = 1; i <= MAX_JACOBI_ITERS; i++) {
+    for (int i = 1; i <= MAX_JACOBI_ITERS; i++) {
         double sum_off = 0.0;
-        for (ip = 0; ip < 3; ip++) {
-            for (iq = ip + 1; iq < 4; iq++) {
+        for (int ip = 0; ip < 3; ip++) {
+            for (int iq = ip + 1; iq < 4; iq++) {
                 sum_off += fabs(A[ip][iq]);
             }
         }
@@ -45,81 +43,82 @@ static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
             return STARFIX_SUCCESS;
         }
 
-        thresh = i < 4 ? 0.2 * sum_off / 16.0 : 0.0;
+        double thresh = i < 4 ? 0.2 * sum_off / 16.0 : 0.0;
 
-        for (ip = 0; ip < 3; ip++) {
-            for (iq = ip + 1; iq < 4; iq++) {
-                g = 100.0 * fabs(A[ip][iq]);
+        for (int ip = 0; ip < 3; ip++) {
+            for (int iq = ip + 1; iq < 4; iq++) {
+                double g = 100.0 * fabs(A[ip][iq]);
 
-                /* skip rotation if off-diagonal element is extremely small */
+                /* skip negligible off-diagonal elements */
                 if (i > 4 && g < 1e-15 * fabs(d[ip]) && g < 1e-15 * fabs(d[iq])) {
                     A[ip][iq] = 0.0;
-                } else if (fabs(A[ip][iq]) > thresh) {
-                    h = d[iq] - d[ip];
-                    if (g < 1e-15 * fabs(h)) {
-                        t = A[ip][iq] / h;
-                    } else {
-                        theta = 0.5 * h / A[ip][iq];
-                        t = 1.0 / (fabs(theta) + sqrt(1.0 + theta * theta));
-                        if (theta < 0.0) {
-                            t = -t;
-                        }
+                    continue;
+                }
+                if (!(fabs(A[ip][iq]) > thresh)) continue;
+                double h = d[iq] - d[ip];
+                double t;
+                if (g < 1e-15 * fabs(h)) {
+                    t = A[ip][iq] / h;
+                } else {
+                    double theta = 0.5 * h / A[ip][iq];
+                    t = 1.0 / (fabs(theta) + sqrt(1.0 + theta * theta));
+                    if (theta < 0.0) {
+                        t = -t;
                     }
+                }
 
-                    c = 1.0 / sqrt(1.0 + t * t);
-                    s = t * c;
-                    h = t * A[ip][iq];
+                double c = 1.0 / sqrt(1.0 + t * t);
+                double s = t * c;
+                h = t * A[ip][iq];
 
-                    z[ip] -= h;
-                    z[iq] += h;
-                    d[ip] -= h;
-                    d[iq] += h;
-                    A[ip][iq] = 0.0;
+                z[ip] -= h;
+                z[iq] += h;
+                d[ip] -= h;
+                d[iq] += h;
+                A[ip][iq] = 0.0;
 
-                    for (j = 0; j < ip; j++) {
-                        rotate(&A[j][ip], &A[j][iq], c, s);
-                    }
-                    for (j = ip + 1; j < iq; j++) {
-                        rotate(&A[ip][j], &A[j][iq], c, s);
-                    }
-                    for (j = iq + 1; j < 4; j++) {
-                        rotate(&A[ip][j], &A[iq][j], c, s);
-                    }
+                for (int j = 0; j < ip; j++) {
+                    rotate(&A[j][ip], &A[j][iq], c, s);
+                }
+                for (int j = ip + 1; j < iq; j++) {
+                    rotate(&A[ip][j], &A[j][iq], c, s);
+                }
+                for (int j = iq + 1; j < 4; j++) {
+                    rotate(&A[ip][j], &A[iq][j], c, s);
+                }
 
-                    for (j = 0; j < 4; j++) {
-                        rotate(&V[j][ip], &V[j][iq], c, s);
-                    }
+                for (int j = 0; j < 4; j++) {
+                    rotate(&V[j][ip], &V[j][iq], c, s);
                 }
             }
         }
 
-        for (ip = 0; ip < 4; ip++) {
+        for (int ip = 0; ip < 4; ip++) {
             b[ip] += z[ip];
             d[ip] = b[ip];
             z[ip] = 0.0;
         }
     }
 
-    return STARFIX_ERR_MEMORY; /* failed to converge */
+    return STARFIX_ERR_SOLVER_DIVERGENCE;
 }
 
 starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
                                         const starfix_vector3_t* v, double R_est[3][3]) {
-    int i, j, k;
-
     if (num_stars < 2) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    if (w == NULL || v == NULL || R_est == NULL) {
-        return STARFIX_ERR_ATTITUDE_DEGENERATE;
-    }
+    if (!w || !v || !R_est) return STARFIX_ERR_NULL_POINTER;
 
     double B[3][3] = {{0}};
-    for (i = 0; i < num_stars; i++) {
+    for (int i = 0; i < num_stars; i++) {
         double camera[3] = {w[i].x, w[i].y, w[i].z};
         double catalog[3] = {v[i].x, v[i].y, v[i].z};
-        for (j = 0; j < 3; j++)
-            for (k = 0; k < 3; k++) B[j][k] += camera[j] * catalog[k];
+        for (int axis = 0; axis < 3; axis++)
+            if (!isfinite(camera[axis]) || !isfinite(catalog[axis]))
+                return STARFIX_ERR_DATA_CORRUPTION;
+        for (int j = 0; j < 3; j++)
+            for (int k = 0; k < 3; k++) B[j][k] += camera[j] * catalog[k];
     }
 
     /* davenport's K for the catalog-to-camera attitude */
@@ -127,9 +126,9 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
     double Z[3] = {B[2][1] - B[1][2], B[0][2] - B[2][0], B[1][0] - B[0][1]};
     double K_mat[4][4];
     K_mat[0][0] = sigma;
-    for (j = 0; j < 3; j++) {
+    for (int j = 0; j < 3; j++) {
         K_mat[0][j + 1] = K_mat[j + 1][0] = Z[j];
-        for (k = 0; k < 3; k++) K_mat[j + 1][k + 1] = B[j][k] + B[k][j];
+        for (int k = 0; k < 3; k++) K_mat[j + 1][k + 1] = B[j][k] + B[k][j];
         K_mat[j + 1][j + 1] -= sigma;
     }
 
@@ -143,7 +142,7 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
 
     /* the largest eigenvalue gives the least-squares attitude */
     int max_idx = 0;
-    for (i = 1; i < 4; i++) {
+    for (int i = 1; i < 4; i++) {
         if (eigenvalues[i] > eigenvalues[max_idx]) {
             max_idx = i;
         }
@@ -212,8 +211,7 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
     starfix_vector3_t v_sample[2];
     double R_tmp[3][3];
 
-    int iter;
-    for (iter = 0; iter < max_iterations; iter++) {
+    for (int iter = 0; iter < max_iterations; iter++) {
         int idx1 = rand() % num_stars;
         int idx2 = rand() % num_stars;
         while (idx2 == idx1 && num_stars > 1) {
@@ -231,8 +229,7 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
         }
 
         int current_inlier_count = 0;
-        int i;
-        for (i = 0; i < num_stars; i++) {
+        for (int i = 0; i < num_stars; i++) {
             starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R_tmp, v[i]);
             double dot = starfix_dot(rotated, w[i]);
             if (dot >= cos_threshold) {
@@ -271,12 +268,10 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
 
 int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfix_vector3_t* z_cam,
                                double temp_c, double press_hpa) {
-    if (w == NULL || z_cam == NULL || num_stars <= 0) {
-        return STARFIX_ERR_INVALID_PARAM;
-    }
+    if (!w || !z_cam) return STARFIX_ERR_NULL_POINTER;
+    if (num_stars <= 0) return STARFIX_ERR_INVALID_PARAM;
 
-    int i;
-    for (i = 0; i < num_stars; i++) {
+    for (int i = 0; i < num_stars; i++) {
         double cos_theta = starfix_dot(w[i], *z_cam);
 
         if (cos_theta > 1.0) cos_theta = 1.0;
@@ -321,17 +316,15 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
 }
 
 int starfix_correct_aberration(int num_stars, starfix_vector3_t* v, const double v_obs_km_s[3]) {
-    if (v == NULL || v_obs_km_s == NULL || num_stars <= 0) {
-        return STARFIX_ERR_NULL_POINTER;
-    }
+    if (!v || !v_obs_km_s) return STARFIX_ERR_NULL_POINTER;
+    if (num_stars <= 0) return STARFIX_ERR_INVALID_PARAM;
 
     const double c_kms = 299792.458;
     double beta_x = v_obs_km_s[0] / c_kms;
     double beta_y = v_obs_km_s[1] / c_kms;
     double beta_z = v_obs_km_s[2] / c_kms;
 
-    int i;
-    for (i = 0; i < num_stars; i++) {
+    for (int i = 0; i < num_stars; i++) {
         double s_dot_b = v[i].x * beta_x + v[i].y * beta_y + v[i].z * beta_z;
 
         /* First order stellar aberration correction: s' = s + beta - s(s . beta) */

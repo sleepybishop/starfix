@@ -21,10 +21,11 @@ static double current_year(void) {
 
 static int load_catalog(starfix_db_t* db, double year) {
     if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
-    if (starfix_load_db("data/starfix_db.bin", db) != 0 &&
-        starfix_load_db("../data/starfix_db.bin", db) != 0) {
+    int status = starfix_load_db("data/starfix_db.bin", db);
+    if (status < 0) status = starfix_load_db("../data/starfix_db.bin", db);
+    if (status < 0) {
         fprintf(stderr, "Could not load data/starfix_db.bin or ../data/starfix_db.bin.\n");
-        return STARFIX_ERR_DATA_CORRUPTION;
+        return status;
     }
     return starfix_propagate_astrometry(db->stars, db->num_stars, year);
 }

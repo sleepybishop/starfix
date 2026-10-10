@@ -6,7 +6,8 @@
 #include "starfix_status.h"
 
 /* fit >= 2 paired unit vectors using davenport's Q-method; R_est maps catalog v to camera w.
- * camera axes: +X right, +Y down, +Z forward; returns zero or a negative error */
+ * camera axes: +X right, +Y down, +Z forward; returns zero or a negative error.
+ * collinear inputs can succeed, but do not determine a unique rotation */
 starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
                                         const starfix_vector3_t* v, double R_est[3][3]);
 

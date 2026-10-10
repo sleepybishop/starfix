@@ -12,7 +12,7 @@ LDFLAGS = -lm
 CORE_SRCS = src/starfix_photo.c src/starfix_centroid.c src/starfix_identify.c src/starfix_attitude.c src/starfix_solver.c src/starfix_astrometry.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
 NAV_OBJS = src/starfix_ekf.o src/starfix_graph.o src/starfix_nmea.o nanoqsp.o nanoqsp_blas.o
-TESTS = t/test_cli_io t/test_photo t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify
+TESTS = t/test_contracts t/test_cli_io t/test_photo t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify
 
 all: starfix_cli
 
@@ -38,6 +38,9 @@ nanoqsp.o: deps/nanoqsp/nanoqsp.c
 
 nanoqsp_blas.o: deps/nanoqsp/nanoqsp_blas.c
 	$(CC) $(DEPS_CFLAGS) -c $< -o $@
+
+t/test_contracts: src/test_contracts.o libstarfix.a libstarfix_navigation.a
+	$(CC) $^ -o $@ $(LDFLAGS)
 
 t/test_cli_io: src/test_cli_io.o tools/starfix_cli_io.o
 	$(CC) $^ -o $@ $(LDFLAGS)
@@ -91,6 +94,6 @@ db:
 	perl scripts/generate_database.pl
 
 clean:
-	rm -f t/test_cli_io t/test_photo t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify starfix_cli examples/starfix_sim examples/starfix_navigation *.o *.a
+	rm -f t/test_contracts t/test_cli_io t/test_photo t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify starfix_cli examples/starfix_sim examples/starfix_navigation *.o *.a
 	rm -f src/*.o src/*.d tools/*.o tools/*.d examples/*.o examples/*.d
 	rm -f data/step1_centroids.png data/step2_identified.png data/step2b_zenith_camera.png data/step2c_zenith_celestial.png data/step2d_earth_coordinates.png data/step3_position.png data/solved_position.json

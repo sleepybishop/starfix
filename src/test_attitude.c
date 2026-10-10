@@ -5,20 +5,18 @@
 
 #include "starfix_arena.h"
 #include "starfix_astrometry.h"
+#include "starfix_attitude.h"
 #include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
-#include "starfix_attitude.h"
-
-/* test runner to verify the C attitude solver under multiple conditions */
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-int main() {
+int main(void) {
+    int failures = 0;
     printf("--- Running Attitude Solver Comprehensive Tests ---\n");
 
     starfix_vector3_t w_dummy[2] = {{1, 0, 0}, {0, 1, 0}};
@@ -35,6 +33,7 @@ int main() {
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (got %d, %d, %d)\n", ret1, ret2, ret3);
     }
 
@@ -94,9 +93,11 @@ int main() {
             printf("Passed\n");
             printf("  Max rotation error: %f degrees\n", max_err_deg);
         } else {
+            failures++;
             printf("FAILED (large error: %f deg)\n", max_err_deg);
         }
     } else {
+        failures++;
         printf("FAILED (solver returned %d)\n", status);
     }
 
@@ -112,6 +113,7 @@ int main() {
     if (status_degen == 0) {
         printf("Passed (handled gracefully)\n");
     } else {
+        failures++;
         printf("FAILED (returned error code: %d)\n", status_degen);
     }
 
@@ -161,9 +163,11 @@ int main() {
         if (max_err_deg < 0.1) {
             printf("Passed (found %d inliers)\n", ransac_inliers);
         } else {
+            failures++;
             printf("FAILED (rotation error too large: %f deg)\n", max_err_deg);
         }
     } else {
+        failures++;
         printf("FAILED (got %d inliers, expected 4)\n", ransac_inliers);
     }
 
@@ -190,6 +194,7 @@ int main() {
         fabs(w_refraction.z - expected_z) < 1e-12) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (status=%d, x=%f (exp=%f), z=%f (exp=%f))\n", ref_status, w_refraction.x,
                expected_x, w_refraction.z, expected_z);
     }
@@ -210,6 +215,7 @@ int main() {
         fabs(v_aberration[0].y - expected_ab_y) < 1e-7) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (status=%d, x=%f (exp=%f), y=%f (exp=%f))\n", ab_status, v_aberration[0].x,
                expected_ab_x, v_aberration[0].y, expected_ab_y);
     }
@@ -233,8 +239,9 @@ int main() {
         fabs(starfix_dot(rotated, rotated) - 14) < 1e-12) {
         printf("Passed\n");
     } else {
+        failures++;
         printf("FAILED (projection, rotation, or normalization)\n");
     }
 
-    return 0;
+    return failures ? 1 : 0;
 }

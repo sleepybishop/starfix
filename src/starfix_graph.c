@@ -172,10 +172,10 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
                                      const starfix_odometry_t* odom, int num_fixes,
                                      const starfix_fix_t* fixes, starfix_pose_t* poses,
                                      double* est_scale, double* est_bias, starfix_arena_t arena) {
+    if (!odom || !poses || !est_scale || !est_bias || (num_fixes > 0 && !fixes))
+        return STARFIX_ERR_NULL_POINTER;
     if (num_nodes <= 0 || steps_per_node <= 0 || num_fixes < 0 || !isfinite(dt_sec) ||
-        dt_sec <= 0.0 || !isfinite(initial_lat) || !isfinite(initial_lon) || odom == NULL ||
-        poses == NULL || est_scale == NULL || est_bias == NULL ||
-        (num_fixes > 0 && fixes == NULL)) {
+        dt_sec <= 0.0 || !isfinite(initial_lat) || !isfinite(initial_lon)) {
         return STARFIX_ERR_INVALID_PARAM;
     }
     if (initial_lat <= -90.0 || initial_lat >= 90.0 || initial_lon < -180.0 ||

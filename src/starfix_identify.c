@@ -7,20 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "starfix_status.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
 #include "starfix_astrometry.h"
 #include "starfix_attitude.h"
 
-/* helper to compress 5D hash code into a single 30-bit integer */
+/* pack five six-bit bins into a 30-bit key */
 static uint32_t compress_hash_key(const int* code) {
     uint32_t key_val = 0;
-    int i;
-    for (i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++) {
         int val = code[i];
         if (val < 0) val = 0;
         if (val > 63) val = 63;
@@ -43,13 +36,15 @@ int starfix_load_db(const char* db_path, starfix_db_t* db) {
     if (!db_path) return STARFIX_ERR_NULL_POINTER;
 
     FILE* f = fopen(db_path, "rb");
-    if (!f) return STARFIX_ERR_MEMORY;
+    if (!f) return STARFIX_ERR_IO;
     starfix_catalog_star_t* catalog = NULL;
     starfix_hash_entry_t* entries = NULL;
-    int status = STARFIX_ERR_DATA_CORRUPTION;
+    int status = STARFIX_ERR_IO;
     if (fseek(f, 0, SEEK_END) != 0) goto done;
     long file_size = ftell(f);
-    if (file_size < 16 || fseek(f, 0, SEEK_SET) != 0) goto done;
+    if (file_size < 0 || fseek(f, 0, SEEK_SET) != 0) goto done;
+    status = STARFIX_ERR_DATA_CORRUPTION;
+    if (file_size < 16) goto done;
 
     unsigned char header[16];
     if (fread(header, 1, sizeof(header), f) != sizeof(header) || memcmp(header, "SFIX", 4) != 0)
@@ -69,8 +64,7 @@ int starfix_load_db(const char* db_path, starfix_db_t* db) {
         goto done;
     }
 
-    uint32_t i;
-    for (i = 0; i < n_stars; i++) {
+    for (uint32_t i = 0; i < n_stars; i++) {
         unsigned char record[12];
         if (fread(record, 1, sizeof(record), f) != sizeof(record)) goto done;
         int32_t hip;
@@ -89,13 +83,12 @@ int starfix_load_db(const char* db_path, starfix_db_t* db) {
     }
 
     uint32_t previous_key = 0;
-    for (i = 0; i < n_entries; i++) {
+    for (uint32_t i = 0; i < n_entries; i++) {
         unsigned char record[12];
         if (fread(record, 1, sizeof(record), f) != sizeof(record)) goto done;
         starfix_hash_entry_t* entry = &entries[i];
         entry->hash_key = decode_le32(record);
-        int j;
-        for (j = 0; j < 4; j++) {
+        for (int j = 0; j < 4; j++) {
             entry->stars[j] = decode_le16(record + 4 + 2 * j);
             if ((uint32_t)entry->stars[j] >= n_stars) goto done;
         }
@@ -106,6 +99,7 @@ int starfix_load_db(const char* db_path, starfix_db_t* db) {
     *db = (starfix_db_t){catalog, entries, n_stars, n_entries, b_factor};
     status = STARFIX_SUCCESS;
 done:
+    if (ferror(f)) status = STARFIX_ERR_IO;
     if (status < 0) {
         free(catalog);
         free(entries);
@@ -135,10 +129,8 @@ static int find_first_hash_entry(uint32_t key, const starfix_hash_entry_t* entri
 }
 
 static void sort_angles(double* angles, int* indices, int n) {
-    int i, j;
-
-    for (i = 0; i < n - 1; i++) {
-        for (j = 0; j < n - i - 1; j++) {
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = 0; j < n - i - 1; j++) {
             if (angles[j] > angles[j + 1]) {
                 double temp_a = angles[j];
                 angles[j] = angles[j + 1];
@@ -156,27 +148,26 @@ static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_
                        int num_observed, const starfix_vector3_t* observed, uint32_t num_stars,
                        const starfix_vector3_t* catalog_vectors, double verify_cos,
                        double field_cos, starfix_match_t verified[20], double* error) {
-    int i, j, seed;
     double R[3][3];
     if (starfix_solve_attitude(4, w_seed, v_seed, R) != STARFIX_SUCCESS) return 0;
     /* reject mirrored seeds before searching for additional matches */
-    for (seed = 0; seed < 4; seed++) {
+    for (int seed = 0; seed < 4; seed++) {
         starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R, v_seed[seed]);
         double dot = starfix_dot(w_seed[seed], rotated);
         if (dot < verify_cos) return 0;
     }
     int nearest[20];
     double nearest_dot[20];
-    for (i = 0; i < num_observed; i++) {
+    for (int i = 0; i < num_observed; i++) {
         nearest[i] = -1;
         nearest_dot[i] = verify_cos;
     }
-    for (j = 0; j < (int)num_stars; j++) {
+    for (int j = 0; j < (int)num_stars; j++) {
         starfix_vector3_t v = catalog_vectors[j];
         double z = starfix_row_dot(R[2], v);
         if (z < field_cos) continue;
         starfix_vector3_t rotated = {starfix_row_dot(R[0], v), starfix_row_dot(R[1], v), z};
-        for (i = 0; i < num_observed; i++) {
+        for (int i = 0; i < num_observed; i++) {
             double dot = starfix_dot(rotated, observed[i]);
             if (dot > nearest_dot[i]) {
                 nearest_dot[i] = dot;
@@ -186,10 +177,10 @@ static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_
     }
     int count = 0;
     *error = 0.0;
-    for (i = 0; i < num_observed; i++) {
+    for (int i = 0; i < num_observed; i++) {
         if (nearest[i] < 0) continue;
         int duplicate = 0;
-        for (j = 0; j < num_observed; j++) {
+        for (int j = 0; j < num_observed; j++) {
             if (j != i && nearest[j] == nearest[i] &&
                 (nearest_dot[j] > nearest_dot[i] || (nearest_dot[j] >= nearest_dot[i] && j < i))) {
                 duplicate = 1;
@@ -301,7 +292,7 @@ static void match_quad(const starfix_vector3_t w[4], const double angles[6], con
         }
         if (i < 6) continue;
         starfix_vector3_t seed[4];
-        for (i = 0; i < 4; i++) seed[i] = v[perms[p][i]];
+        for (int j = 0; j < 4; j++) seed[j] = v[perms[p][j]];
         match_set_t fit;
         fit.count = verify_quad(w, seed, count, camera, num_stars, catalog, verify_cos, field_cos,
                                 fit.matches, &fit.error);
@@ -315,47 +306,17 @@ static void match_quad(const starfix_vector3_t w[4], const double angles[6], con
     }
 }
 
-int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroids, double width,
-                           double height, double fov_deg, const starfix_db_t* db, int max_matches,
-                           starfix_match_t* matches, starfix_arena_t arena,
-                           const double (*attitude_hint)[3]) {
-    if (num_centroids < 3 || centroids == NULL || db == NULL || db->stars == NULL ||
-        matches == NULL) {
-        return STARFIX_ERR_NULL_POINTER;
-    }
-    if (width <= 0.0 || height <= 0.0 || fov_deg <= 0.0 || fov_deg >= 180.0 || !isfinite(width) ||
-        !isfinite(height) || !isfinite(fov_deg) || db->num_stars == 0 ||
-        db->num_stars > (uint32_t)INT_MAX || max_matches <= 0) {
-        return STARFIX_ERR_INVALID_PARAM;
-    }
-
-    int observed = num_centroids < 20 ? num_centroids : 20;
-    double fov = fov_deg * M_PI / 180.0;
-    double focal = starfix_focal_length(width, fov_deg);
-    starfix_vector3_t camera[20];
-    for (int i = 0; i < observed; i++) {
-        camera[i] =
-            starfix_camera_ray(centroids[i].u - width / 2.0, centroids[i].v - height / 2.0, focal);
-    }
-    if (attitude_hint) {
-        int count = track_stars(observed, camera, db->num_stars, db->stars, attitude_hint, fov,
-                                max_matches, matches);
-        if (count >= 3) return count;
-    }
-    if (num_centroids < 4) return STARFIX_ERR_NULL_POINTER;
-    if (!db->hashes || db->num_hashes == 0 || db->bins == 0 || db->bins > 63U)
-        return STARFIX_ERR_INVALID_PARAM;
-
+static int match_blind(int observed, const starfix_vector3_t* camera, const starfix_db_t* db,
+                       double field_cos, int max_matches, starfix_match_t* matches,
+                       starfix_arena_t arena) {
     starfix_vector3_t* catalog = starfix_alloc_array(&arena, starfix_vector3_t, db->num_stars);
     if (!catalog) return STARFIX_ERR_MEMORY;
     for (uint32_t i = 0; i < db->num_stars; i++)
         catalog[i] = starfix_celestial_ray(db->stars[i].ra, db->stars[i].dec);
-    double corner = atan(hypot(width, height) / (2.0 * focal));
-    double field_cos = cos(corner + 0.5 * M_PI / 180.0);
     match_set_t best = {.count = 0, .error = HUGE_VAL};
 
     /* seed from the brightest twelve detections; verify against up to twenty */
-    int seeds = num_centroids < 12 ? num_centroids : 12;
+    int seeds = observed < 12 ? observed : 12;
     int indices[4] = {0, 1, 2, 3};
     do {
         starfix_vector3_t w[4];
@@ -393,15 +354,50 @@ int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroid
     return count >= 3 ? count : STARFIX_ERR_IDENTIFY_NO_MATCH;
 }
 
-int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year) {
-    if (catalog == NULL || num_stars == 0) {
-        return STARFIX_ERR_NULL_POINTER;
+int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroids, double width,
+                           double height, double fov_deg, const starfix_db_t* db, int max_matches,
+                           starfix_match_t* matches, starfix_arena_t arena,
+                           const double (*attitude_hint)[3]) {
+    if (!centroids || !db || !db->stars || !matches) return STARFIX_ERR_NULL_POINTER;
+    if (num_centroids < 3 || width <= 0.0 || height <= 0.0 || fov_deg <= 0.0 || fov_deg >= 180.0 ||
+        !isfinite(width) || !isfinite(height) || !isfinite(fov_deg) || db->num_stars == 0 ||
+        db->num_stars > (uint32_t)INT_MAX || max_matches < 3) {
+        return STARFIX_ERR_INVALID_PARAM;
     }
-    if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
+
+    int observed = num_centroids < 20 ? num_centroids : 20;
+    double fov = fov_deg * M_PI / 180.0;
+    double focal = starfix_focal_length(width, fov_deg);
+    starfix_vector3_t camera[20];
+    for (int i = 0; i < observed; i++) {
+        if (!isfinite(centroids[i].u) || !isfinite(centroids[i].v))
+            return STARFIX_ERR_DATA_CORRUPTION;
+        camera[i] =
+            starfix_camera_ray(centroids[i].u - width / 2.0, centroids[i].v - height / 2.0, focal);
+        if (!isfinite(camera[i].x) || !isfinite(camera[i].y) || !isfinite(camera[i].z))
+            return STARFIX_ERR_DATA_CORRUPTION;
+    }
+    if (attitude_hint) {
+        int count = track_stars(observed, camera, db->num_stars, db->stars, attitude_hint, fov,
+                                max_matches, matches);
+        if (count >= 3) return count;
+    }
+    if (observed < 5) return STARFIX_ERR_IDENTIFY_NO_MATCH;
+    if (!db->hashes) return STARFIX_ERR_NULL_POINTER;
+    if (!db->num_hashes || db->num_hashes > (uint32_t)INT_MAX || !db->bins || db->bins > 63U)
+        return STARFIX_ERR_INVALID_PARAM;
+
+    double corner = atan(hypot(width, height) / (2.0 * focal));
+    double field_cos = cos(corner + 0.5 * M_PI / 180.0);
+    return match_blind(observed, camera, db, field_cos, max_matches, matches, arena);
+}
+
+int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year) {
+    if (!catalog) return STARFIX_ERR_NULL_POINTER;
+    if (!num_stars || !isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
 
     double mjd = starfix_year_to_mjd(year);
-    uint32_t i;
-    for (i = 0; i < num_stars; i++) {
+    for (uint32_t i = 0; i < num_stars; i++) {
         double ra = catalog[i].ra0;
         double dec = catalog[i].dec0;
 
