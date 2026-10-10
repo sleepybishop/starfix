@@ -266,8 +266,9 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
     return count;
 }
 
-int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfix_vector3_t* z_cam,
-                               double temp_c, double press_hpa) {
+starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
+                                            const starfix_vector3_t* z_cam, double temp_c,
+                                            double press_hpa) {
     if (!w || !z_cam) return STARFIX_ERR_NULL_POINTER;
     if (num_stars <= 0) return STARFIX_ERR_INVALID_PARAM;
 
@@ -315,7 +316,8 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
     return STARFIX_SUCCESS;
 }
 
-int starfix_correct_aberration(int num_stars, starfix_vector3_t* v, const double v_obs_km_s[3]) {
+starfix_status_t starfix_correct_aberration(int num_stars, starfix_vector3_t* v,
+                                            const double v_obs_km_s[3]) {
     if (!v || !v_obs_km_s) return STARFIX_ERR_NULL_POINTER;
     if (num_stars <= 0) return STARFIX_ERR_INVALID_PARAM;
 

@@ -7,8 +7,8 @@
 #include "starfix_centroid.h"
 #include "starfix_status.h"
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 typedef struct {
@@ -37,13 +37,14 @@ typedef struct {
 } starfix_match_t;
 
 /* load into an empty database; failure leaves it zeroed; returns zero or negative error */
-int starfix_load_db(const char* db_path, starfix_db_t* db);
+starfix_status_t starfix_load_db(const char* db_path, starfix_db_t* db);
 
 /* free both arrays and zero the database */
 void starfix_free_db(starfix_db_t* db);
 
 /* propagate J2000 coordinates to year */
-int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year);
+starfix_status_t starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars,
+                                              double year);
 
 /* return up to max_matches (>= 3) matches, or a negative error; blind hashes must be sorted.
  * fov_deg is horizontal; camera axes are +X right, +Y down, +Z forward.
@@ -53,4 +54,7 @@ int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroid
                            starfix_match_t* matches, starfix_arena_t arena,
                            const double (*attitude_hint)[3]);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* STARFIX_IDENTIFY_H */

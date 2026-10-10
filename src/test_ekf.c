@@ -1,3 +1,4 @@
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,6 +112,44 @@ int main(void) {
     }
     if (!wrapped) failures++;
     printf(wrapped ? "Passed\n" : "FAILED (longitude wrap)\n");
+
+    printf("Test 7: Invalid state rejection is atomic... ");
+    int invalid_ok = 1;
+    for (int field = 0; field < 7; field++) {
+        starfix_ekf_init(&filter, 10, 20);
+        double* fields[] = {&filter.lat,     &filter.lon,  &filter.scale, &filter.bias,
+                            &filter.P[0][1], &filter.Q[0], &filter.R[0]};
+        *fields[field] = NAN;
+        before = filter;
+        invalid_ok &= starfix_ekf_predict(&filter, 10, 45, 1) == STARFIX_ERR_INVALID_PARAM;
+        invalid_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
+        invalid_ok &= starfix_ekf_correct(&filter, 10, 20) == STARFIX_ERR_INVALID_PARAM;
+        invalid_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
+    }
+    if (!invalid_ok) failures++;
+    printf(invalid_ok ? "Passed\n" : "FAILED (nonfinite state accepted or modified)\n");
+
+    printf("Test 8: Numerical failures preserve the filter... ");
+    int numerical_ok = 1;
+    starfix_ekf_init(&filter, 10, 20);
+    before = filter;
+    numerical_ok &=
+        starfix_ekf_predict(&filter, DBL_MAX, 90, DBL_MAX) == STARFIX_ERR_EKF_DIVERGENCE;
+    numerical_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
+    numerical_ok &= starfix_ekf_predict(&filter, 6000, 0, 3600) == STARFIX_ERR_EKF_DIVERGENCE;
+    numerical_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
+    filter.P[0][0] = DBL_MAX;
+    filter.P[1][1] = DBL_MAX;
+    before = filter;
+    numerical_ok &= starfix_ekf_correct(&filter, 10, 20) == STARFIX_ERR_EKF_DIVERGENCE;
+    numerical_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
+    starfix_ekf_init(&filter, 10, 20);
+    filter.P[2][0] = filter.P[0][2] = DBL_MAX;
+    before = filter;
+    numerical_ok &= starfix_ekf_correct(&filter, 11, 20) == STARFIX_ERR_EKF_DIVERGENCE;
+    numerical_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
+    if (!numerical_ok) failures++;
+    printf(numerical_ok ? "Passed\n" : "FAILED (numerical failure accepted or modified state)\n");
 
     return failures ? 1 : 0;
 }

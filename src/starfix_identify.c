@@ -30,7 +30,7 @@ static uint32_t decode_le32(const unsigned char* p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-int starfix_load_db(const char* db_path, starfix_db_t* db) {
+starfix_status_t starfix_load_db(const char* db_path, starfix_db_t* db) {
     if (!db) return STARFIX_ERR_NULL_POINTER;
     *db = (starfix_db_t){0};
     if (!db_path) return STARFIX_ERR_NULL_POINTER;
@@ -39,7 +39,7 @@ int starfix_load_db(const char* db_path, starfix_db_t* db) {
     if (!f) return STARFIX_ERR_IO;
     starfix_catalog_star_t* catalog = NULL;
     starfix_hash_entry_t* entries = NULL;
-    int status = STARFIX_ERR_IO;
+    starfix_status_t status = STARFIX_ERR_IO;
     if (fseek(f, 0, SEEK_END) != 0) goto done;
     long file_size = ftell(f);
     if (file_size < 0 || fseek(f, 0, SEEK_SET) != 0) goto done;
@@ -392,7 +392,8 @@ int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroid
     return match_blind(observed, camera, db, field_cos, max_matches, matches, arena);
 }
 
-int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year) {
+starfix_status_t starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars,
+                                              double year) {
     if (!catalog) return STARFIX_ERR_NULL_POINTER;
     if (!num_stars || !isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
 
@@ -409,5 +410,5 @@ int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_s
         catalog[i].dec = dec;
     }
 
-    return 0;
+    return STARFIX_SUCCESS;
 }

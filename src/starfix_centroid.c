@@ -54,9 +54,8 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
         if (visited == NULL) return STARFIX_ERR_MEMORY;
         frame_number = 1; /* first frame */
     } else if (frame_number == 0) {
-        /* generation zero collides with a cleared mask; restart at one on wrap */
-        memset(visited, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
-        frame_number = 1;
+        /* clear to a different generation, preserving zero for this frame */
+        memset(visited, 0xff, (size_t)width * (size_t)height * sizeof(uint32_t));
     }
 
     int queue_x[MAX_BLOB_PIXELS];
@@ -127,6 +126,9 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
 
     if (!visited_mask) {
         free(visited);
+    } else if (frame_number == 0) {
+        /* remove the temporary sentinel before another generation can use it */
+        memset(visited, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
     }
     return count;
 }
@@ -148,8 +150,8 @@ int starfix_calibrate_hot_pixels(const unsigned char* dark_image, int width, int
     return count;
 }
 
-int starfix_apply_hot_pixel_mask(unsigned char* image, int width, int height, int num_hot,
-                                 const int* hot_u, const int* hot_v) {
+starfix_status_t starfix_apply_hot_pixel_mask(unsigned char* image, int width, int height,
+                                              int num_hot, const int* hot_u, const int* hot_v) {
     if (!image || !hot_u || !hot_v) return STARFIX_ERR_NULL_POINTER;
     if (width <= 0 || height <= 0 || width > INT_MAX / height || num_hot < 0)
         return STARFIX_ERR_INVALID_PARAM;

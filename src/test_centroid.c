@@ -167,17 +167,27 @@ int main(void) {
 
     free(dark_frame);
 
-    /* 6. Generation zero must work with a caller-owned zero-initialized mask. */
+    /* reset and wrap must leave the next generation usable */
     printf("Test 6: Generation-zero mask handling... ");
     memset(image, 0, (size_t)width * (size_t)height);
     image[60 * width + 60] = 255;
     uint32_t* visited = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
-    int zero_count = starfix_find_centroids(image, width, height, 35, 10, centroids, visited, 0);
-    if (zero_count == 1) {
+    if (!visited) return 1;
+    uint32_t generations[] = {0, 1, 2, UINT32_MAX, 0, 1};
+    int generations_ok = 1;
+    for (size_t generation = 0; generation < sizeof(generations) / sizeof(generations[0]);
+         generation++) {
+        memset(image, 0, (size_t)width * (size_t)height);
+        image[60 * width + (generation >= 3 ? 61 : 60)] = 255;
+        int count = starfix_find_centroids(image, width, height, 35, 10, centroids, visited,
+                                           generations[generation]);
+        generations_ok &= count == 1;
+    }
+    if (generations_ok) {
         printf("Passed\n");
     } else {
         failures++;
-        printf("FAILED (count=%d)\n", zero_count);
+        printf("FAILED (star lost across reset or wrap)\n");
     }
     free(visited);
 

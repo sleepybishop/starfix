@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec_deg,
                                double* roll_deg) {
     double z_1 = R[2][0];

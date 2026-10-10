@@ -4,6 +4,10 @@
 #include "starfix_arena.h"
 #include "starfix_status.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     double lat; /* latitude in degrees */
     double lon; /* longitude in degrees */
@@ -30,4 +34,7 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
                                      const starfix_fix_t* fixes, starfix_pose_t* poses,
                                      double* est_scale, double* est_bias, starfix_arena_t arena);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* STARFIX_GRAPH_H */

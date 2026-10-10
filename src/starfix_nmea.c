@@ -1,6 +1,7 @@
 #include "starfix_nmea.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -22,21 +23,15 @@ static void append_checksum(char* sentence, size_t max_len) {
 
 /* converts degrees format (DD.DDDDD) to NMEA format (DDMM.MMMM) */
 static void deg_to_nmea(double deg, int is_lat, char* out_str, size_t out_size, char* dir) {
-    double abs_deg = fabs(deg);
-    int d = (int)abs_deg;
-    double m = (abs_deg - (double)d) * 60.0;
-
-    if (is_lat) {
-        *dir = (deg >= 0.0) ? 'N' : 'S';
-        snprintf(out_str, out_size, "%02d%07.4f", d, m);
-    } else {
-        *dir = (deg >= 0.0) ? 'E' : 'W';
-        snprintf(out_str, out_size, "%03d%07.4f", d, m);
-    }
+    /* round in ten-thousandths of a minute before splitting degrees and minutes */
+    unsigned ticks = (unsigned)lround(fabs(deg) * 600000.0);
+    *dir = is_lat ? (deg >= 0.0 ? 'N' : 'S') : (deg >= 0.0 ? 'E' : 'W');
+    snprintf(out_str, out_size, "%0*u%02u.%04u", is_lat ? 2 : 3, ticks / 600000, ticks / 10000 % 60,
+             ticks % 10000);
 }
 
-int starfix_format_nmea(double lat_deg, double lon_deg, time_t time_utc, char* out_buffer,
-                        size_t out_size) {
+starfix_status_t starfix_format_nmea(double lat_deg, double lon_deg, time_t time_utc,
+                                     char* out_buffer, size_t out_size) {
     if (!out_buffer) return STARFIX_ERR_NULL_POINTER;
     if (!isfinite(lat_deg) || !isfinite(lon_deg) || lat_deg < -90 || lat_deg > 90 ||
         lon_deg < -180 || lon_deg > 180)

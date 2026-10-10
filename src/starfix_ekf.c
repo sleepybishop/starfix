@@ -13,9 +13,26 @@ static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 
 /* preserve both endpoints: -180 stays -180 and +180 stays +180 */
 static double wrap_longitude(double lon) {
-    while (lon > 180.0) lon -= 360.0;
-    while (lon < -180.0) lon += 360.0;
+    if (!isfinite(lon)) return lon;
+    lon = fmod(lon, 360.0);
+    if (lon > 180.0) lon -= 360.0;
+    if (lon < -180.0) lon += 360.0;
     return lon;
+}
+
+static int valid_filter(const starfix_ekf_t* filter) {
+    if (!isfinite(filter->lat) || filter->lat <= -90.0 || filter->lat >= 90.0 ||
+        !isfinite(filter->lon) || filter->lon < -180.0 || filter->lon > 180.0 ||
+        !isfinite(filter->scale) || filter->scale < 1e-9 || !isfinite(filter->bias))
+        return 0;
+    for (int i = 0; i < 4; i++) {
+        if (!isfinite(filter->Q[i]) || filter->Q[i] < 0 || filter->P[i][i] < 0) return 0;
+        for (int j = 0; j < 4; j++)
+            if (!isfinite(filter->P[i][j])) return 0;
+    }
+    for (int i = 0; i < 2; i++)
+        if (!isfinite(filter->R[i]) || filter->R[i] < 0) return 0;
+    return 1;
 }
 
 starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double init_lon) {
@@ -48,10 +65,10 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
         return STARFIX_ERR_NULL_POINTER;
     }
     if (!isfinite(speed_knots) || !isfinite(heading_deg) || !isfinite(dt_sec) || dt_sec <= 0.0 ||
-        !isfinite(filter->scale) || fabs(filter->scale) < 1e-9 || !isfinite(filter->lat) ||
-        filter->lat <= -90.0 || filter->lat >= 90.0) {
+        !valid_filter(filter)) {
         return STARFIX_ERR_INVALID_PARAM;
     }
+    starfix_ekf_t next = *filter;
     double corrected_speed = speed_knots / filter->scale;
     double corrected_heading = deg_to_rad(heading_deg) - filter->bias;
 
@@ -61,8 +78,8 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     double pred_d_lat = dist_nm * cos(corrected_heading) / 60.0;
     double pred_d_lon = dist_nm * sin(corrected_heading) / (60.0 * cos(lat_rad));
 
-    filter->lat += pred_d_lat;
-    filter->lon = wrap_longitude(filter->lon + pred_d_lon);
+    next.lat += pred_d_lat;
+    next.lon = wrap_longitude(filter->lon + pred_d_lon);
 
     double F[4][4] = {
         {1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}, {0.0, 0.0, 1.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
@@ -93,10 +110,12 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
             for (int k = 0; k < 4; k++) {
                 val += FP[i][k] * F[j][k];
             }
-            filter->P[i][j] = val;
+            next.P[i][j] = val;
         }
-        filter->P[i][i] += filter->Q[i];
+        next.P[i][i] += filter->Q[i];
     }
+    if (!valid_filter(&next)) return STARFIX_ERR_EKF_DIVERGENCE;
+    *filter = next;
     return STARFIX_SUCCESS;
 }
 
@@ -106,9 +125,11 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
         return STARFIX_ERR_NULL_POINTER;
     }
     if (!isfinite(celestial_lat) || !isfinite(celestial_lon) || celestial_lat < -90.0 ||
-        celestial_lat > 90.0 || celestial_lon < -180.0 || celestial_lon > 180.0) {
+        celestial_lat > 90.0 || celestial_lon < -180.0 || celestial_lon > 180.0 ||
+        !valid_filter(filter)) {
         return STARFIX_ERR_INVALID_PARAM;
     }
+    starfix_ekf_t next = *filter;
     double S[2][2];
     double S_inv[2][2];
     double K[4][2];
@@ -121,7 +142,8 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     S[1][1] = filter->P[1][1] + filter->R[1];
 
     double det = S[0][0] * S[1][1] - S[0][1] * S[1][0];
-    if (fabs(det) < 1e-12) {
+    if (!isfinite(det)) return STARFIX_ERR_EKF_DIVERGENCE;
+    if (det < 1e-12) {
         return STARFIX_ERR_SOLVER_SINGULAR; /* singular matrix, skip update */
     }
 
@@ -144,12 +166,11 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     double inno_norm = y[0] * y[0] + y[1] * y[1];
     if (inno_norm > 10.0) return STARFIX_ERR_EKF_DIVERGENCE;
 
-    /* Gate the measurement before mutating the filter so a rejected update is atomic. */
-    filter->lat += K[0][0] * y[0] + K[0][1] * y[1];
-    filter->lon += K[1][0] * y[0] + K[1][1] * y[1];
-    filter->scale += K[2][0] * y[0] + K[2][1] * y[1];
-    filter->bias += K[3][0] * y[0] + K[3][1] * y[1];
-    filter->lon = wrap_longitude(filter->lon);
+    next.lat += K[0][0] * y[0] + K[0][1] * y[1];
+    next.lon += K[1][0] * y[0] + K[1][1] * y[1];
+    next.scale += K[2][0] * y[0] + K[2][1] * y[1];
+    next.bias += K[3][0] * y[0] + K[3][1] * y[1];
+    next.lon = wrap_longitude(next.lon);
 
     /* H selects lat/lon; form each coefficient of I - K H as needed */
     for (int i = 0; i < 4; i++) {
@@ -165,8 +186,10 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     /* copy back to P and symmetrize */
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
-            filter->P[i][j] = (P_next[i][j] + P_next[j][i]) / 2.0;
+            next.P[i][j] = (P_next[i][j] + P_next[j][i]) / 2.0;
         }
     }
+    if (!valid_filter(&next)) return STARFIX_ERR_EKF_DIVERGENCE;
+    *filter = next;
     return STARFIX_SUCCESS;
 }

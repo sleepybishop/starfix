@@ -1,8 +1,6 @@
 #ifndef STARFIX_STATUS_H
 #define STARFIX_STATUS_H
 
-#include <stdint.h>
-
 typedef enum {
     STARFIX_SUCCESS = 0,
 

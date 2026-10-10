@@ -20,13 +20,15 @@ static inline double starfix_row_dot(const double row[3], starfix_vector3_t v) {
 }
 
 static inline starfix_vector3_t starfix_rotate(const double R[3][3], starfix_vector3_t v) {
-    return (starfix_vector3_t){starfix_row_dot(R[0], v), starfix_row_dot(R[1], v),
-                               starfix_row_dot(R[2], v)};
+    starfix_vector3_t result = {starfix_row_dot(R[0], v), starfix_row_dot(R[1], v),
+                                starfix_row_dot(R[2], v)};
+    return result;
 }
 
 /* RA and dec in radians, in the catalog frame */
 static inline starfix_vector3_t starfix_celestial_ray(double ra, double dec) {
-    return (starfix_vector3_t){cos(dec) * cos(ra), cos(dec) * sin(ra), sin(dec)};
+    starfix_vector3_t result = {cos(dec) * cos(ra), cos(dec) * sin(ra), sin(dec)};
+    return result;
 }
 
 /* horizontal FOV in degrees; focal length in pixels */
@@ -38,7 +40,8 @@ static inline double starfix_focal_length(double width, double fov_deg) {
 static inline starfix_vector3_t starfix_camera_ray(double u, double v, double focal) {
     double x = u / focal, y = v / focal;
     double norm = hypot(hypot(x, y), 1.0);
-    return (starfix_vector3_t){x / norm, y / norm, 1.0 / norm};
+    starfix_vector3_t result = {x / norm, y / norm, 1.0 / norm};
+    return result;
 }
 
 #endif

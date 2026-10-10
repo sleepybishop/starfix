@@ -115,6 +115,17 @@ int main(void) {
                   STARFIX_ERR_INVALID_PARAM &&
               starfix_format_nmea(91, 0, 0, output, sizeof(output)) == STARFIX_ERR_INVALID_PARAM,
           "NMEA invalid output and coordinates");
+    check(starfix_format_nmea(12.999999999, 45.999999999, 0, output, sizeof(output)) ==
+                  STARFIX_SUCCESS &&
+              strstr(output, ",1300.0000,N,04600.0000,E,") != NULL,
+          "NMEA minute rounding carries into degrees");
+    check(starfix_format_nmea(-89.999999999, -179.999999999, 0, output, sizeof(output)) ==
+                  STARFIX_SUCCESS &&
+              strstr(output, ",9000.0000,S,18000.0000,W,") != NULL,
+          "NMEA rounding preserves hemispheres at coordinate limits");
+    check(starfix_format_nmea(12.999998, 45.999998, 0, output, sizeof(output)) == STARFIX_SUCCESS &&
+              strstr(output, ",1259.9999,N,04559.9999,E,") != NULL,
+          "NMEA values below the carry boundary keep their degrees");
     if (!failures) puts("Public contract checks passed");
     return failures ? 1 : 0;
 }

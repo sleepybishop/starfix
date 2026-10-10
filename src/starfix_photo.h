@@ -1,8 +1,14 @@
 #ifndef STARFIX_PHOTO_H
 #define STARFIX_PHOTO_H
 
+#include <stdint.h>
+
 #include "starfix_attitude.h"
 #include "starfix_identify.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct {
     double width, height;
@@ -28,4 +34,7 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
                                      const starfix_photo_options_t* options,
                                      starfix_photo_result_t* result, starfix_arena_t arena);
 
+#ifdef __cplusplus
+}
+#endif
 #endif
