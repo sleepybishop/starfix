@@ -33,10 +33,10 @@ static void refine_centroid(const unsigned char* image, int width, int height, i
     centroid->v = 0.5 * centroid->v + 0.5 * ((double)y + v);
 }
 
-starfix_status_t starfix_find_centroids(const unsigned char* image, int width, int height,
-                                        unsigned char threshold, int max_centroids,
-                                        starfix_centroid_t* centroids, uint32_t* visited_mask,
-                                        uint32_t frame_number, starfix_telemetry_t* telem) {
+int starfix_find_centroids(const unsigned char* image, int width, int height,
+                           unsigned char threshold, int max_centroids,
+                           starfix_centroid_t* centroids, uint32_t* visited_mask,
+                           uint32_t frame_number) {
     if (image == NULL || centroids == NULL) {
         return STARFIX_ERR_CENTROID_BUFFER_FULL;
     }
@@ -126,13 +126,10 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
 
     qsort(centroids, (size_t)count, sizeof(*centroids), compare_centroids);
 
-    if (telem) {
-        telem->num_stars_detected = (uint32_t)count;
-    }
     if (!visited_mask) {
         free(visited);
     }
-    return STARFIX_SUCCESS;
+    return count;
 }
 
 int starfix_calibrate_hot_pixels(const unsigned char* dark_image, int width, int height,

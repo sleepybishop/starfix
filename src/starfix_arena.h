@@ -23,6 +23,7 @@
 
 #include "starfix_status.h"
 
+/* algorithms take scratch arenas by value; only allocation advances a cursor */
 typedef struct {
     uint8_t* beg;
     uint8_t* end;

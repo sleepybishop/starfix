@@ -9,7 +9,6 @@
 /* test runner to verify the C centroiding implementation under multiple conditions */
 
 int main() {
-    starfix_telemetry_t telem = {0};
     printf("--- Running Centroid Comprehensive Tests ---\n");
 
     int width = 128;
@@ -24,9 +23,9 @@ int main() {
     }
 
     /* 1. NULL Pointer & Invalid Size Checks */
-    int ret1 = starfix_find_centroids(NULL, width, height, 35, 10, centroids, NULL, 1, &telem);
-    int ret2 = starfix_find_centroids(image, 0, height, 35, 10, centroids, NULL, 1, &telem);
-    int ret3 = starfix_find_centroids(image, width, height, 35, 0, centroids, NULL, 1, &telem);
+    int ret1 = starfix_find_centroids(NULL, width, height, 35, 10, centroids, NULL, 1);
+    int ret2 = starfix_find_centroids(image, 0, height, 35, 10, centroids, NULL, 1);
+    int ret3 = starfix_find_centroids(image, width, height, 35, 0, centroids, NULL, 1);
 
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Test 1: Boundary check... Passed\n");
@@ -39,10 +38,8 @@ int main() {
     for (i = 0; i < width * height; i++) {
         image[i] = 10;
     }
-    starfix_status_t status_black =
-        starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1, &telem);
-    int count_black = (int)telem.num_stars_detected;
-    if (status_black == STARFIX_SUCCESS && count_black == 0) {
+    int count_black = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
+    if (count_black == 0) {
         printf("Test 2: Black image (no stars)... Passed\n");
     } else {
         printf("Test 2: Black image (no stars)... FAILED (detected %d centroids)\n", count_black);
@@ -82,10 +79,8 @@ int main() {
         }
     }
 
-    starfix_status_t status_happy =
-        starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1, &telem);
-    int count_happy = (int)telem.num_stars_detected;
-    if (status_happy == STARFIX_SUCCESS && count_happy == 2) {
+    int count_happy = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
+    if (count_happy == 2) {
         double err0 = sqrt(pow(centroids[0].u - 30.4, 2) + pow(centroids[0].v - 50.8, 2));
         double err1 = sqrt(pow(centroids[1].u - 85.2, 2) + pow(centroids[1].v - 20.3, 2));
         if (err0 < 0.1 && err1 < 0.1) {
@@ -110,11 +105,9 @@ int main() {
             image[y * width + x] = 255;
         }
     }
-    starfix_status_t status_giant =
-        starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1, &telem);
-    int count_giant = (int)telem.num_stars_detected;
+    int count_giant = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
     /* should detect star 0 and star 1, but discard the giant block */
-    if (status_giant == STARFIX_SUCCESS && count_giant == 2) {
+    if (count_giant == 2) {
         printf("Test 4: Giant saturated blob rejection... Passed\n");
     } else {
         printf("Test 4: Giant saturated blob rejection... FAILED (count = %d, expected 2)\n",
@@ -153,12 +146,10 @@ int main() {
             starfix_apply_hot_pixel_mask(image, width, height, num_hot, mask_u, mask_v);
 
         /* detect centroids */
-        starfix_status_t status_masked =
-            starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1, &telem);
-        int count_masked = (int)telem.num_stars_detected;
+        int count_masked = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
 
-        if (mask_status == 0 && status_masked == STARFIX_SUCCESS && count_masked == 1 &&
-            fabs(centroids[0].u - 50.295) < 0.1 && fabs(centroids[0].v - 50.295) < 0.1) {
+        if (mask_status == 0 && count_masked == 1 && fabs(centroids[0].u - 50.295) < 0.1 &&
+            fabs(centroids[0].v - 50.295) < 0.1) {
             printf("Passed\n");
         } else {
             printf("FAILED (status=%d, count_masked=%d, u=%.2f, v=%.2f)\n", mask_status,
@@ -175,14 +166,23 @@ int main() {
     memset(image, 0, (size_t)width * (size_t)height);
     image[60 * width + 60] = 255;
     uint32_t* visited = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
-    starfix_status_t zero_status =
-        starfix_find_centroids(image, width, height, 35, 10, centroids, visited, 0, &telem);
-    if (zero_status == STARFIX_SUCCESS && telem.num_stars_detected == 1) {
+    int zero_count = starfix_find_centroids(image, width, height, 35, 10, centroids, visited, 0);
+    if (zero_count == 1) {
         printf("Passed\n");
     } else {
-        printf("FAILED (status=%d, count=%u)\n", zero_status, telem.num_stars_detected);
+        printf("FAILED (count=%d)\n", zero_count);
     }
     free(visited);
+
+    printf("Test 7: Count limited to output capacity... ");
+    image[80 * width + 80] = 255;
+    starfix_centroid_t limited[2] = {{0}, {.num_pixels = -1}};
+    int limited_count = starfix_find_centroids(image, width, height, 35, 1, limited, NULL, 1);
+    if (limited_count == 1 && limited[1].num_pixels == -1) {
+        printf("Passed\n");
+    } else {
+        printf("FAILED (count=%d)\n", limited_count);
+    }
 
     free(image);
     return 0;

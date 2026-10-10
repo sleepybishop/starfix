@@ -6,8 +6,7 @@
 #include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena;
-#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
+static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
 #include "starfix_graph.h"
 
@@ -29,16 +28,14 @@ int main() {
     /* 1. NULL Pointer & Sizing Validations */
     printf("Test 1: Sizing and NULL validations... ");
     double scale = 1.0, bias = 0.0;
-    int ret1 =
-        (RESET_ARENA(), starfix_solve_graph(0, steps_per_node, dt_sec, init_lat, init_lon, NULL, 0,
-                                            NULL, NULL, &scale, &bias, &arena, NULL));
-    int ret2 =
-        (RESET_ARENA(), starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon,
-                                            NULL, 0, NULL, NULL, &scale, &bias, &arena, NULL));
+    int ret1 = starfix_solve_graph(0, steps_per_node, dt_sec, init_lat, init_lon, NULL, 0, NULL,
+                                   NULL, &scale, &bias, arena, NULL);
+    int ret2 = starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, NULL, 0,
+                                   NULL, NULL, &scale, &bias, arena, NULL);
     starfix_odometry_t one_odom = {1.0, 0.0};
     starfix_pose_t two_poses[2];
-    int ret3 = (RESET_ARENA(), starfix_solve_graph(1, 1, dt_sec, init_lat, init_lon, &one_odom, 1,
-                                                   NULL, two_poses, &scale, &bias, &arena, NULL));
+    int ret3 = starfix_solve_graph(1, 1, dt_sec, init_lat, init_lon, &one_odom, 1, NULL, two_poses,
+                                   &scale, &bias, arena, NULL);
 
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
@@ -106,9 +103,8 @@ int main() {
     /* solve graph */
     double est_scale = 1.0;
     double est_bias = 0.0;
-    int status = (RESET_ARENA(), starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat,
-                                                     init_lon, odom, num_fixes, fixes, poses,
-                                                     &est_scale, &est_bias, &arena, NULL));
+    int status = starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, odom,
+                                     num_fixes, fixes, poses, &est_scale, &est_bias, arena, NULL);
 
     if (status >= 0) {
         /* compute final optimized pose error vs true pose at end node */
@@ -150,7 +146,7 @@ int main() {
         starfix_arena_t small = {mempool, mempool + 1024 * 1024};
         large_status =
             starfix_solve_graph(large_nodes, 1, dt_sec, init_lat, init_lon, large_odom, 0, NULL,
-                                large_poses, &large_scale, &large_bias, &small, NULL);
+                                large_poses, &large_scale, &large_bias, small, NULL);
         if (large_status == STARFIX_SUCCESS) {
             for (i = 0; i <= large_nodes; i++) {
                 if (!(fabs(large_poses[i].lat - init_lat) < 1e-12 &&

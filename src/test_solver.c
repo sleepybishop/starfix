@@ -26,11 +26,10 @@ static void report(const char* name, int passed) {
 static int check_fix(double lat, double lon, double gha) {
     starfix_vector3_t w = observe(lat, lon, gha, 3.0);
     double actual_lat, actual_lon;
-    starfix_telemetry_t telem = {.solver_iterations = 999};
-    int status = starfix_solve_position(1, &w, R, &gha, &actual_lat, &actual_lon, &telem);
+    int status = starfix_solve_position(1, &w, R, &gha, &actual_lat, &actual_lon);
     return status == STARFIX_SUCCESS && fabs(actual_lat - lat) < 1e-9 &&
            fabs(remainder(actual_lon - lon, 360.0)) < 1e-9 && actual_lon >= -180.0 &&
-           actual_lon < 180.0 && telem.solver_iterations == 0;
+           actual_lon < 180.0;
 }
 
 int main(void) {
@@ -39,14 +38,14 @@ int main(void) {
     starfix_vector3_t zero = {0, 0, 0};
     starfix_vector3_t invalid = {NAN, 0, 1};
     double invalid_gha = INFINITY;
-    int valid_errors = starfix_solve_position(0, &valid, R, &gha, &lat, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, NULL, R, &gha, &lat, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, &valid, NULL, &gha, &lat, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, &valid, R, NULL, &lat, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, &valid, R, &gha, NULL, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, &zero, R, &gha, &lat, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, &invalid, R, &gha, &lat, &lon, NULL) < 0 &&
-                       starfix_solve_position(1, &valid, R, &invalid_gha, &lat, &lon, NULL) < 0;
+    int valid_errors = starfix_solve_position(0, &valid, R, &gha, &lat, &lon) < 0 &&
+                       starfix_solve_position(1, NULL, R, &gha, &lat, &lon) < 0 &&
+                       starfix_solve_position(1, &valid, NULL, &gha, &lat, &lon) < 0 &&
+                       starfix_solve_position(1, &valid, R, NULL, &lat, &lon) < 0 &&
+                       starfix_solve_position(1, &valid, R, &gha, NULL, &lon) < 0 &&
+                       starfix_solve_position(1, &zero, R, &gha, &lat, &lon) < 0 &&
+                       starfix_solve_position(1, &invalid, R, &gha, &lat, &lon) < 0 &&
+                       starfix_solve_position(1, &valid, R, &invalid_gha, &lat, &lon) < 0;
     report("Test 1: Argument validation",
            valid_errors && fabs(lat - 12.0) < 1e-12 && fabs(lon - 34.0) < 1e-12);
     report("Test 2: Happy path position fix solver", check_fix(34.0522, -118.2437, 120));
@@ -65,26 +64,26 @@ int main(void) {
     starfix_vector3_t measurements[3];
     for (int i = 0; i < 3; i++)
         measurements[i] = observe(-35, 179.95, times_multi[i], (double)i + 1);
-    int status = starfix_solve_position(3, measurements, R, times_multi, &lat, &lon, NULL);
+    int status = starfix_solve_position(3, measurements, R, times_multi, &lat, &lon);
     report("Test 4: Average time-aligned Earth-fixed directions",
            status == 0 && fabs(lat + 35) < 1e-9 && fabs(lon - 179.95) < 1e-9);
     double pair_times[2] = {0, 0};
     starfix_vector3_t pair[2] = {observe(0, 179.9, 0, 1), observe(0, -179.9, 0, 1)};
-    status = starfix_solve_position(2, pair, R, pair_times, &lat, &lon, NULL);
+    status = starfix_solve_position(2, pair, R, pair_times, &lat, &lon);
     report("Test 5: Average across antimeridian",
            status == 0 && fabs(lat) < 1e-9 && fabs(fabs(lon) - 180) < 1e-9);
 
     int poles_ok = 1;
     for (int sign = -1; sign <= 1; sign += 2) {
         starfix_vector3_t pole = {(double)sign, 0, 0};
-        status = starfix_solve_position(1, &pole, R, &gha, &lat, &lon, NULL);
+        status = starfix_solve_position(1, &pole, R, &gha, &lat, &lon);
         poles_ok &= status == 0 && fabs(lat - 90 * sign) < 1e-9 && fabs(lon) < 1e-9;
     }
     report("Test 6: Pole longitude convention", poles_ok);
     pair[0] = (starfix_vector3_t){1, 0, 0};
     pair[1] = (starfix_vector3_t){-1, 0, 0};
-    report("Test 7: Reject cancelling directions",
-           starfix_solve_position(2, pair, R, pair_times, &lat, &lon, NULL) ==
-               STARFIX_ERR_SOLVER_SINGULAR);
+    report(
+        "Test 7: Reject cancelling directions",
+        starfix_solve_position(2, pair, R, pair_times, &lat, &lon) == STARFIX_ERR_SOLVER_SINGULAR);
     return failures ? 1 : 0;
 }

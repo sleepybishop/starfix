@@ -191,14 +191,14 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
     return STARFIX_SUCCESS;
 }
 
-starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
-                                               const starfix_vector3_t* v, double threshold_deg,
-                                               starfix_quaternion_t* q_est, double R_est[3][3],
-                                               starfix_arena_t* arena, starfix_telemetry_t* telem) {
+int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
+                                  const starfix_vector3_t* v, double threshold_deg,
+                                  starfix_quaternion_t* q_est, double R_est[3][3],
+                                  starfix_arena_t arena) {
     if (num_stars < 2) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    if (w == NULL || v == NULL || q_est == NULL || R_est == NULL || arena == NULL) {
+    if (w == NULL || v == NULL || q_est == NULL || R_est == NULL) {
         return STARFIX_ERR_NULL_POINTER;
     }
     if (!isfinite(threshold_deg) || threshold_deg <= 0.0 || threshold_deg >= 180.0) {
@@ -216,8 +216,8 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
 
     int max_iterations = 20;
     int best_inlier_count = 0;
-    int* best_inliers = starfix_alloc_array(arena, int, (size_t)num_stars);
-    int* current_inliers = starfix_alloc_array(arena, int, (size_t)num_stars);
+    int* best_inliers = starfix_alloc_array(&arena, int, (size_t)num_stars);
+    int* current_inliers = starfix_alloc_array(&arena, int, (size_t)num_stars);
 
     if (best_inliers == NULL || current_inliers == NULL) {
         return STARFIX_ERR_MEMORY;
@@ -268,17 +268,13 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
         }
     }
 
-    if (telem) {
-        telem->ransac_iterations = (uint32_t)max_iterations;
-    }
-
     /* refit the winning set; fall back to all observations if no pair survived */
     int count = num_stars;
     if (best_inlier_count >= 2) {
         starfix_vector3_t* w_inliers =
-            starfix_alloc_array(arena, starfix_vector3_t, best_inlier_count);
+            starfix_alloc_array(&arena, starfix_vector3_t, best_inlier_count);
         starfix_vector3_t* v_inliers =
-            starfix_alloc_array(arena, starfix_vector3_t, best_inlier_count);
+            starfix_alloc_array(&arena, starfix_vector3_t, best_inlier_count);
         if (!w_inliers || !v_inliers) return STARFIX_ERR_MEMORY;
         for (int i = 0; i < best_inlier_count; i++) {
             w_inliers[i] = w[best_inliers[i]];
@@ -290,8 +286,7 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
     }
     int status = starfix_solve_attitude(count, w, v, q_est, R_est);
     if (status < 0) return status;
-    if (telem) telem->ransac_inliers = (uint32_t)count;
-    return STARFIX_SUCCESS;
+    return count;
 }
 
 int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfix_vector3_t* z_cam,

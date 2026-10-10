@@ -7,8 +7,7 @@
 #include "starfix_status.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena;
-#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
+static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
 #include "starfix_attitude.h"
 
@@ -19,8 +18,6 @@ static starfix_arena_t arena;
 #endif
 
 int main() {
-    starfix_telemetry_t telem = {0};
-    (void)telem;
     printf("--- Running Attitude Solver Comprehensive Tests ---\n");
 
     starfix_vector3_t w_dummy[2] = {{1, 0, 0}, {0, 1, 0}};
@@ -32,8 +29,7 @@ int main() {
     printf("Test 1: Boundary check... ");
     int ret1 = starfix_solve_attitude(1, w_dummy, v_dummy, &q_est, R_est);
     int ret2 = starfix_solve_attitude(2, NULL, v_dummy, &q_est, R_est);
-    int ret3 = (RESET_ARENA(),
-                starfix_solve_attitude_ransac(2, NULL, v_dummy, 0.1, &q_est, R_est, &arena, NULL));
+    int ret3 = starfix_solve_attitude_ransac(2, NULL, v_dummy, 0.1, &q_est, R_est, arena);
 
     if (ret1 < 0 && ret2 < 0 && ret3 < 0) {
         printf("Passed\n");
@@ -147,12 +143,10 @@ int main() {
     w_ransac[5].z = 0.0;
 
     /* run RANSAC attitude solver */
-    starfix_status_t ransac_status =
-        (RESET_ARENA(),
-         starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, &q_est, R_est, &arena, &telem));
-    int ransac_inliers = (int)telem.ransac_inliers;
+    int ransac_inliers =
+        starfix_solve_attitude_ransac(6, w_ransac, v_ransac, 0.2, &q_est, R_est, arena);
 
-    if (ransac_status == STARFIX_SUCCESS && ransac_inliers == 4) {
+    if (ransac_inliers == 4) {
         double max_err = 0.0;
         int r, c;
         for (r = 0; r < 3; r++) {

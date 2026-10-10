@@ -171,11 +171,11 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
                                      double initial_lat, double initial_lon,
                                      const starfix_odometry_t* odom, int num_fixes,
                                      const starfix_fix_t* fixes, starfix_pose_t* poses,
-                                     double* est_scale, double* est_bias, starfix_arena_t* arena,
+                                     double* est_scale, double* est_bias, starfix_arena_t arena,
                                      starfix_telemetry_t* telem) {
     if (num_nodes <= 0 || steps_per_node <= 0 || num_fixes < 0 || !isfinite(dt_sec) ||
         dt_sec <= 0.0 || !isfinite(initial_lat) || !isfinite(initial_lon) || odom == NULL ||
-        poses == NULL || est_scale == NULL || est_bias == NULL || arena == NULL ||
+        poses == NULL || est_scale == NULL || est_bias == NULL ||
         (num_fixes > 0 && fixes == NULL)) {
         return STARFIX_ERR_INVALID_PARAM;
     }
@@ -206,21 +206,21 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
     if (capacity > (uint64_t)PTRDIFF_MAX) return STARFIX_ERR_INVALID_PARAM;
     ptrdiff_t max_terms = (ptrdiff_t)capacity;
 
-    double* x = starfix_alloc_array(arena, double, n);
-    factor_t* factors = starfix_alloc_array(arena, factor_t, m);
-    double* delta = starfix_alloc_array(arena, double, n);
-    double* rhs = starfix_alloc_array(arena, double, n);
-    normal_term_t* terms = starfix_alloc_array(arena, normal_term_t, max_terms);
-    double* values = starfix_alloc_array(arena, double, max_terms);
-    int* cols = starfix_alloc_array(arena, int, max_terms);
-    int* rows = starfix_alloc_array(arena, int, n + 1);
+    double* x = starfix_alloc_array(&arena, double, n);
+    factor_t* factors = starfix_alloc_array(&arena, factor_t, m);
+    double* delta = starfix_alloc_array(&arena, double, n);
+    double* rhs = starfix_alloc_array(&arena, double, n);
+    normal_term_t* terms = starfix_alloc_array(&arena, normal_term_t, max_terms);
+    double* values = starfix_alloc_array(&arena, double, max_terms);
+    int* cols = starfix_alloc_array(&arena, int, max_terms);
+    int* rows = starfix_alloc_array(&arena, int, n + 1);
     NanoqspCSR matrix = {.n = n, .values = values, .col_indices = cols, .row_ptr = rows};
-    double* lower = starfix_alloc_array(arena, double, n);
-    double* upper = starfix_alloc_array(arena, double, n);
+    double* lower = starfix_alloc_array(&arena, double, n);
+    double* upper = starfix_alloc_array(&arena, double, n);
     NanoqspConfig config = {.strategy = NANOQSP_STRATEGY_SPECTRAL_GRADIENT,
                             .max_iterations = 2000,
                             .tolerance = 1e-9,
-                            .workspace = starfix_alloc_array(arena, double, 65536),
+                            .workspace = starfix_alloc_array(&arena, double, 65536),
                             .workspace_size = 65536};
     if (!x || !factors || !delta || !rhs || !terms || !values || !cols || !rows || !lower ||
         !upper || !config.workspace)

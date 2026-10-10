@@ -13,12 +13,12 @@ typedef struct {
 
 /* find flux-weighted centroids in a row-major byte image, subtracting threshold from intensity.
  * centroids holds max_centroids; optional visited_mask has width * height generation entries.
- * frame_number zero clears/restarts the mask; telem->num_stars_detected gives the count.
- * returns zero or a negative error */
-starfix_status_t starfix_find_centroids(const unsigned char* image, int width, int height,
-                                        unsigned char threshold, int max_centroids,
-                                        starfix_centroid_t* centroids, uint32_t* visited_mask,
-                                        uint32_t frame_number, starfix_telemetry_t* telem);
+ * frame_number zero clears/restarts the mask.
+ * returns the count (up to max_centroids) or a negative error */
+int starfix_find_centroids(const unsigned char* image, int width, int height,
+                           unsigned char threshold, int max_centroids,
+                           starfix_centroid_t* centroids, uint32_t* visited_mask,
+                           uint32_t frame_number);
 
 /* find hot pixels; hot_u/hot_v hold max_hot entries; returns count or negative error */
 int starfix_calibrate_hot_pixels(const unsigned char* dark_image, int width, int height,

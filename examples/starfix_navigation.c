@@ -7,8 +7,7 @@
 #include "starfix_arena.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena;
-#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
+static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -140,10 +139,10 @@ static int do_fuse_graph() {
     double est_scale = 1.0;
     double est_bias = 0.0;
     starfix_telemetry_t telem = {0};
-    RESET_ARENA();
+
     starfix_status_t status =
         starfix_solve_graph(num_nodes, steps_per_node, dt_sec, init_lat, init_lon, odom, num_fixes,
-                            fixes, poses, &est_scale, &est_bias, &arena, &telem);
+                            fixes, poses, &est_scale, &est_bias, arena, &telem);
 
     if (status == STARFIX_SUCCESS) {
         double err_lat = poses[num_nodes].lat - true_lats[num_nodes];

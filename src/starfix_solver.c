@@ -9,8 +9,7 @@
 
 starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* zenith_cam,
                                         const double R_est[3][3], const double* gha_aries,
-                                        double* solved_lat, double* solved_lon,
-                                        starfix_telemetry_t* telem) {
+                                        double* solved_lat, double* solved_lon) {
     if (num_meas <= 0) return STARFIX_ERR_INVALID_PARAM;
     if (zenith_cam == NULL || R_est == NULL || gha_aries == NULL || solved_lat == NULL ||
         solved_lon == NULL)
@@ -49,6 +48,5 @@ starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* z
     if (longitude >= 180.0) longitude -= 360.0;
     *solved_lat = latitude;
     *solved_lon = longitude;
-    if (telem) telem->solver_iterations = 0;
     return STARFIX_SUCCESS;
 }

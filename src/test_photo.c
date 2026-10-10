@@ -14,9 +14,12 @@ int main(void) {
         .gha_aries = 120,
         .zenith_camera = {0, 0, 1},
     };
-    starfix_centroid_t centroids[4] = {{0}};
-    starfix_catalog_star_t catalog[4] = {{0}};
-    starfix_match_t matches[4];
+    /* keep inputs ahead of the scratch cursor to exercise nested workspace use */
+    starfix_centroid_t* centroids = starfix_alloc_array(&arena, starfix_centroid_t, 4);
+    starfix_catalog_star_t* catalog = starfix_alloc_array(&arena, starfix_catalog_star_t, 4);
+    starfix_match_t* matches = starfix_alloc_array(&arena, starfix_match_t, 4);
+    if (!centroids || !catalog || !matches) return 1;
+    uint8_t* scratch = arena.beg;
     for (int i = 0; i < 4; i++) {
         double angle = (double)i * M_PI / 2;
         centroids[i].u = 200 + 50 * cos(angle);
@@ -27,10 +30,10 @@ int main(void) {
     }
     starfix_photo_result_t result;
     for (int i = 0; i < 5; i++) {
-        if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, &arena) !=
+        if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, arena) !=
                 STARFIX_SUCCESS ||
             fabs(result.latitude - 90) > 1e-6 || result.rms_pixels > 0.1 || result.inliers != 4 ||
-            arena.beg != memory) {
+            arena.beg != scratch) {
             fprintf(stderr,
                     "FAILED: repeated photo fits must preserve scratch space and recover pole\n");
             return 1;
@@ -38,22 +41,22 @@ int main(void) {
     }
     starfix_photo_result_t before = result;
     matches[0].catalog_idx = 4;
-    if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, &arena) !=
+    if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, arena) !=
             STARFIX_ERR_INVALID_PARAM ||
-        memcmp(&result, &before, sizeof(result)) != 0 || arena.beg != memory) {
+        memcmp(&result, &before, sizeof(result)) != 0 || arena.beg != scratch) {
         fprintf(stderr, "FAILED: invalid match must preserve result and arena\n");
         return 1;
     }
     matches[0].catalog_idx = 0;
-    starfix_arena_t small = {memory, memory + 1};
-    if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, &small) !=
+    starfix_arena_t small = {scratch, scratch + 1};
+    if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, small) !=
             STARFIX_ERR_MEMORY ||
-        memcmp(&result, &before, sizeof(result)) != 0 || small.beg != memory) {
+        memcmp(&result, &before, sizeof(result)) != 0 || small.beg != scratch) {
         fprintf(stderr, "FAILED: insufficient workspace must preserve result and arena\n");
         return 1;
     }
     options.zenith_camera.z = 0;
-    if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, &arena) !=
+    if (starfix_solve_photo(4, centroids, 4, catalog, 4, matches, &options, &result, arena) !=
         STARFIX_ERR_INVALID_PARAM) {
         fprintf(stderr, "FAILED: invalid zenith must be rejected\n");
         return 1;

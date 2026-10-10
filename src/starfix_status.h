@@ -25,10 +25,6 @@ typedef enum {
 } starfix_status_t;
 
 typedef struct {
-    uint32_t num_stars_detected;
-    uint32_t identify_matches;
-    uint32_t ransac_iterations;
-    uint32_t ransac_inliers;
     uint32_t solver_iterations;
     double ekf_innovation_norm;
 } starfix_telemetry_t;

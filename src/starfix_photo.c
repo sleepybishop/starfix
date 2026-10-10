@@ -6,9 +6,8 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
                                      uint32_t num_stars, const starfix_catalog_star_t* catalog,
                                      int num_matches, const starfix_match_t* matches,
                                      const starfix_photo_options_t* options,
-                                     starfix_photo_result_t* result, starfix_arena_t* arena) {
-    if (!centroids || !catalog || !matches || !options || !result || !arena)
-        return STARFIX_ERR_NULL_POINTER;
+                                     starfix_photo_result_t* result, starfix_arena_t arena) {
+    if (!centroids || !catalog || !matches || !options || !result) return STARFIX_ERR_NULL_POINTER;
     if (num_centroids < 3 || num_stars < 3 || num_matches < 3 || num_matches > num_centroids ||
         !isfinite(options->width) || options->width <= 0 || !isfinite(options->height) ||
         options->height <= 0 || !isfinite(options->fov_deg) || options->fov_deg <= 0 ||
@@ -18,10 +17,8 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
     double norm = hypot(hypot(zenith->x, zenith->y), zenith->z);
     if (!isfinite(norm) || fabs(norm - 1.0) > 1e-3) return STARFIX_ERR_INVALID_PARAM;
 
-    /* Copy the cursor so repeated FOV fits can reuse the same workspace. */
-    starfix_arena_t scratch = *arena;
-    starfix_vector3_t* camera = starfix_alloc_array(&scratch, starfix_vector3_t, num_matches);
-    starfix_vector3_t* celestial = starfix_alloc_array(&scratch, starfix_vector3_t, num_matches);
+    starfix_vector3_t* camera = starfix_alloc_array(&arena, starfix_vector3_t, num_matches);
+    starfix_vector3_t* celestial = starfix_alloc_array(&arena, starfix_vector3_t, num_matches);
     if (!camera || !celestial) return STARFIX_ERR_MEMORY;
     double focal = options->width / (2.0 * tan(options->fov_deg * M_PI / 360.0));
     for (int i = 0; i < num_matches; i++) {
@@ -44,10 +41,9 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
     if (status != STARFIX_SUCCESS) return status;
     starfix_photo_result_t fitted = {0};
     starfix_quaternion_t q;
-    starfix_telemetry_t telemetry = {0};
-    status = starfix_solve_attitude_ransac(num_matches, camera, celestial, 0.25, &q,
-                                           fitted.rotation, &scratch, &telemetry);
-    if (status != STARFIX_SUCCESS) return status;
+    int inliers = starfix_solve_attitude_ransac(num_matches, camera, celestial, 0.25, &q,
+                                                fitted.rotation, arena);
+    if (inliers < 0) return inliers;
     double sum_sq = 0;
     for (int i = 0; i < num_matches; i++) {
         double projected[3];
@@ -62,13 +58,13 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
         sum_sq += du * du + dv * dv;
     }
     fitted.rms_pixels = sqrt(sum_sq / (double)num_matches);
-    fitted.inliers = telemetry.ransac_inliers;
+    fitted.inliers = (uint32_t)inliers;
     fitted.matches = num_matches;
     if (!isfinite(fitted.rms_pixels) || fitted.rms_pixels > 3.0 || fitted.inliers < 3 ||
         (double)fitted.inliers / (double)num_matches < 0.6)
         return STARFIX_ERR_RANSAC_INSUFFICIENT_INLIERS;
     status = starfix_solve_position(1, zenith, (const double (*)[3])fitted.rotation,
-                                    &options->gha_aries, &fitted.latitude, &fitted.longitude, NULL);
+                                    &options->gha_aries, &fitted.latitude, &fitted.longitude);
     if (status != STARFIX_SUCCESS) return status;
     *result = fitted;
     return STARFIX_SUCCESS;

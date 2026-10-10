@@ -26,6 +26,6 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
                                      uint32_t num_stars, const starfix_catalog_star_t* catalog,
                                      int num_matches, const starfix_match_t* matches,
                                      const starfix_photo_options_t* options,
-                                     starfix_photo_result_t* result, starfix_arena_t* arena);
+                                     starfix_photo_result_t* result, starfix_arena_t arena);
 
 #endif

@@ -7,8 +7,7 @@
 #include "starfix_arena.h"
 
 static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena;
-#define RESET_ARENA() (arena.beg = mempool, arena.end = mempool + sizeof(mempool))
+static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -88,11 +87,8 @@ static int do_estimate_pose() {
     }
 
     /* reload database just to get catalog vectors */
-    starfix_catalog_star_t* catalog = NULL;
-    starfix_hash_entry_t* hash_table = NULL;
-    uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
-    if (starfix_load_db("data/starfix_db.bin", &catalog, &num_stars, &hash_table, &num_entries,
-                        &bin_factor) != 0) {
+    starfix_db_t db = {0};
+    if (starfix_load_db("data/starfix_db.bin", &db) != 0) {
         printf("Error loading binary database.\n");
         return -1;
     }
@@ -102,14 +98,13 @@ static int do_estimate_pose() {
     struct tm* tm_now = gmtime(&t_now);
     double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
     printf("Propagating catalog precession to year %.2f...\n", current_year);
-    starfix_propagate_astrometry(catalog, num_stars, current_year, NULL);
+    starfix_propagate_astrometry(db.stars, db.num_stars, current_year, NULL);
 
     /* load detected centroids */
     starfix_centroid_t centroids[1000];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 1000);
     if (cent_count <= 0) {
-        free(catalog);
-        free(hash_table);
+        starfix_free_db(&db);
         return -1;
     }
 
@@ -121,11 +116,10 @@ static int do_estimate_pose() {
         .zenith_camera = {0, 0, 1},
     };
     starfix_photo_result_t result;
-    RESET_ARENA();
-    starfix_status_t status = starfix_solve_photo(cent_count, centroids, num_stars, catalog,
-                                                  match_count, matches, &options, &result, &arena);
-    free(catalog);
-    free(hash_table);
+
+    starfix_status_t status = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
+                                                  match_count, matches, &options, &result, arena);
+    starfix_free_db(&db);
     if (status != STARFIX_SUCCESS) {
         fprintf(stderr, "Simulated photo fit failed (status %d)\n", status);
         return 1;
@@ -201,11 +195,9 @@ static int do_solve_fix() {
     }
 
     double solved_lat = 0.0, solved_lon = 0.0;
-    starfix_telemetry_t telem = {0};
-    RESET_ARENA();
-    starfix_status_t status =
-        starfix_solve_position(50, zenith_cam_meas, (const double (*)[3])R, gha_aries_arr,
-                               &solved_lat, &solved_lon, &telem);
+
+    starfix_status_t status = starfix_solve_position(50, zenith_cam_meas, (const double (*)[3])R,
+                                                     gha_aries_arr, &solved_lat, &solved_lon);
 
     if (status != STARFIX_SUCCESS) {
         printf("Position fix solver failed.\n");

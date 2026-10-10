@@ -26,28 +26,32 @@ typedef struct {
 } starfix_hash_entry_t;
 
 typedef struct {
+    starfix_catalog_star_t* stars;
+    starfix_hash_entry_t* hashes;
+    uint32_t num_stars, num_hashes, bins;
+} starfix_db_t;
+
+typedef struct {
     int centroid_idx; /* index of camera centroid */
-    int catalog_idx;  /* index in catalog_stars array */
+    int catalog_idx;  /* index in db.stars */
 } starfix_match_t;
 
-/* load catalog and sorted hashes; caller frees both arrays; returns zero or negative error */
-int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
-                    uint32_t* num_stars, starfix_hash_entry_t** hash_entries, uint32_t* num_entries,
-                    uint32_t* bin_factor);
+/* load into an empty database; failure leaves it zeroed; returns zero or negative error */
+int starfix_load_db(const char* db_path, starfix_db_t* db);
+
+/* free both arrays and zero the database */
+void starfix_free_db(starfix_db_t* db);
 
 /* propagate J2000 coordinates to year; optional cached_year skips changes < one day */
 int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
                                  double* cached_year);
 
-/* match pixel centroids to catalog indices; hash_entries must be sorted, matches holds max_matches.
+/* return up to max_matches matches (>= 3), or a negative error; hashes must be sorted.
  * fov_deg is horizontal; camera axes are +X right, +Y down, +Z forward.
- * blind matching needs a quad plus an independent fifth star; tracking can use three matches.
- * returns zero or a negative error; telem->identify_matches gives the count */
-starfix_status_t starfix_identify_stars(
-    int num_centroids, const starfix_centroid_t* centroids, double width, double height,
-    double fov_deg, uint32_t num_stars, const starfix_catalog_star_t* catalog_stars,
-    uint32_t num_entries, const starfix_hash_entry_t* hash_entries, uint32_t bin_factor,
-    int max_matches, starfix_match_t* matches, starfix_arena_t* arena, starfix_telemetry_t* telem,
-    const double (*attitude_hint)[3]);
+ * blind matching needs a quad plus an independent fifth star; tracking needs three matches */
+int starfix_identify_stars(int num_centroids, const starfix_centroid_t* centroids, double width,
+                           double height, double fov_deg, const starfix_db_t* db, int max_matches,
+                           starfix_match_t* matches, starfix_arena_t arena,
+                           const double (*attitude_hint)[3]);
 
 #endif /* STARFIX_IDENTIFY_H */

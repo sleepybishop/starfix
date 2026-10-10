@@ -13,24 +13,16 @@
 
 static uint8_t mempool[10 * 1024 * 1024];
 
-typedef struct {
-    starfix_catalog_star_t* stars;
-    starfix_hash_entry_t* hashes;
-    uint32_t num_stars, num_hashes, bins;
-} catalog_t;
-
 static double current_year(void) {
     time_t now = time(NULL);
     struct tm* utc = gmtime(&now);
     return utc ? 1900.0 + utc->tm_year + utc->tm_yday / 365.25 : NAN;
 }
 
-static int load_catalog(catalog_t* db, double year) {
+static int load_catalog(starfix_db_t* db, double year) {
     if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
-    if (starfix_load_db("data/starfix_db.bin", &db->stars, &db->num_stars, &db->hashes,
-                        &db->num_hashes, &db->bins) != 0 &&
-        starfix_load_db("../data/starfix_db.bin", &db->stars, &db->num_stars, &db->hashes,
-                        &db->num_hashes, &db->bins) != 0) {
+    if (starfix_load_db("data/starfix_db.bin", db) != 0 &&
+        starfix_load_db("../data/starfix_db.bin", db) != 0) {
         fprintf(stderr, "Could not load data/starfix_db.bin or ../data/starfix_db.bin.\n");
         return STARFIX_ERR_DATA_CORRUPTION;
     }
@@ -47,14 +39,12 @@ static int do_centroid(int threshold) {
     }
 
     starfix_centroid_t centroids[1000];
-    starfix_telemetry_t telem = {0};
-    starfix_status_t count_status = starfix_find_centroids(img, w, h, (unsigned char)threshold,
-                                                           1000, centroids, NULL, 1, &telem);
-    int count = (int)telem.num_stars_detected;
+    int count =
+        starfix_find_centroids(img, w, h, (unsigned char)threshold, 1000, centroids, NULL, 1);
     free(img);
 
-    if (count_status != STARFIX_SUCCESS) {
-        printf("Centroid extraction failed with code %d\n", (int)count_status);
+    if (count < 0) {
+        printf("Centroid extraction failed with code %d\n", count);
         return -1;
     }
 
@@ -64,7 +54,7 @@ static int do_centroid(int threshold) {
 }
 
 static int do_identify(int width, int height, double fov_deg, double observation_year) {
-    catalog_t db = {0};
+    starfix_db_t db = {0};
     int result = -1;
     if (load_catalog(&db, observation_year) != 0) goto done;
 
@@ -78,15 +68,12 @@ static int do_identify(int width, int height, double fov_deg, double observation
     printf("Using top %d brightest centroids for pattern matching...\n",
            (cent_count < 12) ? cent_count : 12);
     starfix_match_t matches[20];
-    starfix_telemetry_t telem = {0};
     starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
-    starfix_status_t match_status = starfix_identify_stars(
-        cent_count, centroids, width, height, fov_deg, db.num_stars, db.stars, db.num_hashes,
-        db.hashes, db.bins, 20, matches, &arena, &telem, NULL);
-    int match_count = (int)telem.identify_matches;
+    int match_count = starfix_identify_stars(cent_count, centroids, width, height, fov_deg, &db, 20,
+                                             matches, arena, NULL);
 
-    if (match_status != STARFIX_SUCCESS) {
-        printf("Identification failed with code %d\n", (int)match_status);
+    if (match_count < 0) {
+        printf("Identification failed with code %d\n", match_count);
         goto done;
     }
 
@@ -106,13 +93,12 @@ static int do_identify(int width, int height, double fov_deg, double observation
 
     result = 0;
 done:
-    free(db.stars);
-    free(db.hashes);
+    starfix_free_db(&db);
     return result;
 }
 
 static int do_solve_photo(const starfix_photo_options_t* options, double year, int attitude_only) {
-    catalog_t db = {0};
+    starfix_db_t db = {0};
     int result = 1;
     if (load_catalog(&db, year) != 0) goto done;
 
@@ -141,7 +127,7 @@ static int do_solve_photo(const starfix_photo_options_t* options, double year, i
     starfix_photo_result_t fitted;
     starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
     starfix_status_t status = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
-                                                  match_count, matches, options, &fitted, &arena);
+                                                  match_count, matches, options, &fitted, arena);
     if (status != STARFIX_SUCCESS) {
         fprintf(stderr, "Photo solution failed quality or input checks (status %d)\n", status);
         goto done;
@@ -167,8 +153,7 @@ static int do_solve_photo(const starfix_photo_options_t* options, double year, i
     }
     result = 0;
 done:
-    free(db.stars);
-    free(db.hashes);
+    starfix_free_db(&db);
     return result;
 }
 

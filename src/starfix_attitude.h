@@ -16,11 +16,11 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
                                         double R_est[3][3]);
 
 /* RANSAC attitude fit with threshold_deg angular tolerance; vectors and outputs as above.
- * returns zero or a negative error; optional telemetry reports inliers and iterations */
-starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
-                                               const starfix_vector3_t* v, double threshold_deg,
-                                               starfix_quaternion_t* q_est, double R_est[3][3],
-                                               starfix_arena_t* arena, starfix_telemetry_t* telem);
+ * Returns inliers or a negative error; refits all observations if no pair survives. */
+int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
+                                  const starfix_vector3_t* v, double threshold_deg,
+                                  starfix_quaternion_t* q_est, double R_est[3][3],
+                                  starfix_arena_t arena);
 
 /* unrefract w in place; z_cam is zenith, temp_c celsius, press_hpa hPa */
 int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfix_vector3_t* z_cam,
