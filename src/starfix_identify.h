@@ -7,10 +7,6 @@
 #include "starfix_centroid.h"
 #include "starfix_status.h"
 
-/* starfix_identify: C API for lost-in-space star identification using TETRA.
-   loads a flat binary database and matches detected sub-pixel camera centroids
-   to catalog star indices by hashing 4-star combinations (quads). */
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -24,7 +20,6 @@ typedef struct {
     double dec0; /* Base J2000 Dec in radians */
 } starfix_catalog_star_t;
 
-/* Inline helper functions for quantization/dequantization */
 static inline double starfix_catalog_ra(const starfix_catalog_star_t* star) { return star->ra; }
 
 static inline double starfix_catalog_dec(const starfix_catalog_star_t* star) { return star->dec; }
@@ -53,42 +48,19 @@ typedef struct {
     int catalog_idx;  /* index in catalog_stars array */
 } starfix_match_t;
 
-/* loads the binary database:
-   - db_path: path to starfix_db.bin
-   - catalog_stars: output pointer to allocated star catalog array
-   - num_stars: output pointer to number of stars in catalog
-   - hash_entries: output pointer to allocated hash entries array
-   - num_entries: output pointer to number of hash entries
-   - bin_factor: output pointer to bin factor used in hashing
-   - returns: 0 on success, negative value on error */
+/* load catalog and sorted hashes; caller frees both arrays; returns zero or negative error */
 int starfix_load_db(const char* db_path, starfix_catalog_star_t** catalog_stars,
                     uint32_t* num_stars, starfix_hash_entry_t** hash_entries, uint32_t* num_entries,
                     uint32_t* bin_factor);
 
-/* propagates the entire catalog's J2000 coordinates to the specified year using full astrometry
-   models. if cached_year is provided, it skips computation if the year hasn't meaningfully changed
-   (>1 day). returns 0 on success. */
+/* propagate J2000 coordinates to year; optional cached_year skips changes < one day */
 int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_stars, double year,
                                  double* cached_year);
 
-/* performs lost-in-space star identification using TETRA:
-   - num_centroids: number of detected centroids
-   - centroids: array of detected centroids
-   - width: sensor width in pixels
-   - height: sensor height in pixels
-   - fov_deg: camera field-of-view in degrees
-   - camera frame is right-handed: +X image right, +Y image down, +Z forward
-   - num_stars: number of stars in database catalog
-   - catalog_stars: star catalog array
-   - num_entries: number of database hash entries
-   - hash_entries: sorted database hash entries array
-   - bin_factor: database bin factor
-   - max_matches: maximum number of matches to output
-   - matches: output array of matched pairs
-   - blind mode validates a four-star seed with at least one additional star;
-     tracking mode can use three matches with the supplied attitude hint
-   - returns: STARFIX_SUCCESS when at least three stars are identified, or a negative error;
-     the exact match count is written to telem->identify_matches */
+/* match pixel centroids to catalog indices; hash_entries must be sorted, matches holds max_matches.
+ * fov_deg is horizontal; camera axes are +X right, +Y down, +Z forward.
+ * blind matching needs a quad plus an independent fifth star; tracking can use three matches.
+ * returns zero or a negative error; telem->identify_matches gives the count */
 starfix_status_t starfix_identify_stars(
     int num_centroids, const starfix_centroid_t* centroids, double width, double height,
     double fov_deg, uint32_t num_stars, const starfix_catalog_star_t* catalog_stars,

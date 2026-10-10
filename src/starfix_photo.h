@@ -19,13 +19,9 @@ typedef struct {
     double latitude, longitude;
 } starfix_photo_result_t;
 
-/* Fit already-identified observations and compute a direct position fix.
- * The caller owns/precesses the catalog and can reuse it across FOV trials.
- * Refraction, RANSAC, projection checks, and quality limits are shared by all callers.
- * No file I/O, logging, or heap allocations. The supplied arena is scratch space;
- * its cursor and result are unchanged on failure, and its cursor is also unchanged
- * on success. A successful result includes RMS <= 3 pixels, >= 3 inliers, and an
- * inlier fraction >= 0.6. Match indices refer to the supplied arrays. */
+/* fit identified matches against a caller-precessed catalog; indices refer to the supplied arrays.
+ * uses scratch arena space without advancing its cursor; result is unchanged on error.
+ * success requires RMS <= 3 pixels, >= 3 inliers, and inlier fraction >= 0.6 */
 starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t* centroids,
                                      uint32_t num_stars, const starfix_catalog_star_t* catalog,
                                      int num_matches, const starfix_match_t* matches,

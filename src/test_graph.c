@@ -135,7 +135,7 @@ int main() {
         printf("FAILED (solver returned %d)\n", status);
     }
 
-    /* 3. Scratch storage must remain bounded as the graph grows. */
+    /* a stationary 200-node graph fits in 1 MiB and preserves its initial pose */
     printf("Test 3: Bounded arena use for larger graph... ");
     int large_nodes = 200;
     starfix_odometry_t* large_odom =
@@ -145,13 +145,22 @@ int main() {
     double large_scale = 1.0;
     double large_bias = 0.0;
     int large_status = STARFIX_ERR_MEMORY;
+    int stationary = 1;
     if (large_odom != NULL && large_poses != NULL) {
+        starfix_arena_t small = {mempool, mempool + 1024 * 1024};
         large_status =
-            (RESET_ARENA(),
-             starfix_solve_graph(large_nodes, 1, dt_sec, init_lat, init_lon, large_odom, 0, NULL,
-                                 large_poses, &large_scale, &large_bias, &arena, NULL));
+            starfix_solve_graph(large_nodes, 1, dt_sec, init_lat, init_lon, large_odom, 0, NULL,
+                                large_poses, &large_scale, &large_bias, &small, NULL);
+        if (large_status == STARFIX_SUCCESS) {
+            for (i = 0; i <= large_nodes; i++) {
+                if (!(fabs(large_poses[i].lat - init_lat) < 1e-12 &&
+                      fabs(large_poses[i].lon - init_lon) < 1e-12))
+                    stationary = 0;
+            }
+        }
     }
-    if (large_status == STARFIX_SUCCESS) {
+    if (large_status == STARFIX_SUCCESS && stationary && fabs(large_scale - 1.0) < 1e-12 &&
+        fabs(large_bias) < 1e-12) {
         printf("Passed\n");
     } else {
         printf("FAILED (status=%d)\n", large_status);

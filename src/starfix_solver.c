@@ -17,24 +17,20 @@ starfix_status_t starfix_solve_position(int num_meas, const starfix_vector3_t* z
         return STARFIX_ERR_NULL_POINTER;
     for (int row = 0; row < 3; row++) {
         for (int col = 0; col < 3; col++) {
-            STARFIX_ASSERT_VALID_DOUBLE(R_est[row][col]);
+            if (!isfinite(R_est[row][col])) return STARFIX_ERR_DATA_CORRUPTION;
         }
     }
 
     double sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
     for (int i = 0; i < num_meas; i++) {
         const starfix_vector3_t* w = &zenith_cam[i];
-        STARFIX_ASSERT_VALID_DOUBLE(w->x);
-        STARFIX_ASSERT_VALID_DOUBLE(w->y);
-        STARFIX_ASSERT_VALID_DOUBLE(w->z);
-        STARFIX_ASSERT_VALID_DOUBLE(gha_aries[i]);
+        if (!isfinite(w->x) || !isfinite(w->y) || !isfinite(w->z) || !isfinite(gha_aries[i]))
+            return STARFIX_ERR_DATA_CORRUPTION;
         double norm = hypot(hypot(w->x, w->y), w->z);
         if (!isfinite(norm) || norm < 1e-12) return STARFIX_ERR_INVALID_PARAM;
         double wx = w->x / norm, wy = w->y / norm, wz = w->z / norm;
 
-        /* Camera -> celestial using R^T, then undo Earth's sidereal rotation.
-         * Average directions in the Earth-fixed frame, so timestamps can differ
-         * and longitudes straddling the antimeridian do not average to zero. */
+        /* earth-fixed averaging handles differing times and antimeridian crossings */
         double x = R_est[0][0] * wx + R_est[1][0] * wy + R_est[2][0] * wz;
         double y = R_est[0][1] * wx + R_est[1][1] * wy + R_est[2][1] * wz;
         double z = R_est[0][2] * wx + R_est[1][2] * wy + R_est[2][2] * wz;

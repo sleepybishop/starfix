@@ -25,7 +25,6 @@ static starfix_arena_t arena;
 #define M_PI 3.14159265358979323846
 #endif
 
-/* actions */
 static int do_centroid(int threshold) {
     printf("Loading image from data/mock_image.pgm...\n");
     int w = 0, h = 0;
@@ -138,7 +137,6 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         return 1;
     }
 
-    /* load detected centroids */
     starfix_centroid_t centroids[1000];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 1000);
     if (cent_count <= 0) {
@@ -151,7 +149,6 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         return 1;
     }
 
-    /* load identified stars */
     starfix_match_t matches[1000];
     int match_count = read_identified_json("data/identified_stars.json", matches, 1000);
     if (match_count <= 0) {

@@ -4,10 +4,6 @@
 #include "starfix_arena.h"
 #include "starfix_status.h"
 
-/* starfix_graph: C API for factor graph trajectory smoothing. performs batch
-   non-linear least-squares trajectory optimization over a set of pose keyframes,
-   fusing dead reckoning and celestial fixes, and calibrating sensor biases. */
-
 typedef struct {
     double lat; /* latitude in degrees */
     double lon; /* longitude in degrees */
@@ -24,19 +20,10 @@ typedef struct {
     double lon;   /* celestial longitude in degrees */
 } starfix_fix_t;
 
-/* solves the factor graph optimization using gauss-newton iterations:
-   - num_nodes: number of keyframe poses to solve (excluding start pose)
-   - steps_per_node: number of odometry readings integrated per keyframe interval
-   - dt_sec: time interval of each odometry reading in seconds
-   - initial_lat: true starting latitude in degrees
-   - initial_lon: true starting longitude in degrees
-   - odom: raw odometry readings (size num_nodes * steps_per_node)
-   - num_fixes: number of celestial fixes
-   - fixes: array of celestial fixes
-   - poses: output array of optimized keyframe poses (size num_nodes + 1)
-   - est_scale: input/output pointer to speed log scale factor (measured speed / true speed)
-   - est_bias: input/output pointer to heading bias in radians
-   - returns: STARFIX_SUCCESS or a negative error; iteration count is written to telem */
+/* smooth num_nodes intervals with gauss-newton; poses has num_nodes + 1 entries.
+ * odom has num_nodes * steps_per_node readings spaced dt_sec seconds apart.
+ * initial lat/lon are degrees; scale (measured/true speed) and bias (radians) are in/out.
+ * returns zero or a negative error; optional telemetry reports iterations */
 starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec,
                                      double initial_lat, double initial_lon,
                                      const starfix_odometry_t* odom, int num_fixes,

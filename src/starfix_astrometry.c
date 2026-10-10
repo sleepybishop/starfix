@@ -12,26 +12,20 @@
 
 double starfix_year_to_mjd(double year) { return J2000 + (year - 2000.0) * 365.25; }
 
-/* Precession computation to or from J2000
- * If dir < 0 go from equinox to J2000
- * If dir > 0 go from J2000 to equinox
- */
+/* dir < 0 precesses to J2000; dir > 0 precesses from J2000 */
 static void do_precess(double equinox, double* alpha, double* delta, int dir) {
     double T;
     double zeta_A, z_A, theta_A;
     double A, B, C;
 
-    /* Precession progresses about 1 arc second in .047 years = 17 days
-     * Threshold must be at most 1.7 days for 0.1 arcsec accuracy */
+    /* a one-day cutoff keeps precession error below 0.1 arcsec */
     double threshhold = 1;
 
     if (fabs(equinox - J2000) < threshhold) return;
 
     T = (equinox - J2000) / 36525.0;
 
-    /* Compute coefficients in arcseconds from the Naval
-     * Observatory, Her Majesty's Nautical Amanac Office;
-     * Rutherford Appleton Laboratory, ISSN 0737-6421. */
+    /* coefficients: USNO/HMNAO, rutherford appleton laboratory, ISSN 0737-6421 */
 
     zeta_A = arcsecrad(
         2.650545 +
@@ -43,13 +37,11 @@ static void do_precess(double equinox, double* alpha, double* delta, int dir) {
         T * (2004.191903 - T * (0.4294934 + T * (0.04182264 + T * (7.089e-6 + 1.274e-7 * T)))));
 
     if (dir < 0) {
-        /* If dir is negative, go from equinox to 2000.0 */
         A = sin(*alpha - z_A) * cos(*delta);
         B = cos(*alpha - z_A) * cos(theta_A) * cos(*delta) + sin(theta_A) * sin(*delta);
         C = -cos(*alpha - z_A) * sin(theta_A) * cos(*delta) + cos(theta_A) * sin(*delta);
         *alpha = atan2(A, B) - zeta_A;
     } else {
-        /* If dir is positive, go from 2000.0 to equinox */
         A = sin(*alpha + zeta_A) * cos(*delta);
         B = cos(*alpha + zeta_A) * cos(theta_A) * cos(*delta) - sin(theta_A) * sin(*delta);
         C = cos(*alpha + zeta_A) * sin(theta_A) * cos(*delta) + cos(theta_A) * sin(*delta);
@@ -64,19 +56,12 @@ static void do_precess(double equinox, double* alpha, double* delta, int dir) {
     *delta = asin(C);
 }
 
-/* Corrects ra and dec, both in radians, for precession from epoch 1 to
- * epoch 2.  The epochs are given by their modified JDs, from_mjd and
- * to_mjd, respectively.  N.B. ra and dec are modifed IN PLACE.
- */
 void starfix_precess(double to_mjd, double* ra, double* dec) { do_precess(to_mjd, ra, dec, 1); }
 static void obliquity(double mj, double* eps) {
     double t = (mj - J2000) / 36525.0;
     *eps = degrad(23.4392911 + t * (-46.8150 + t * (-0.00059 + t * (0.001813))) / 3600.0);
 }
-/* nutation (in IAU (1980) expression) and abberation; stern
- * on an HP PA processor, this reproduces the Almanac nutation values
- * (given to 0.001") EXACTLY over 750 days (1995 and 1996)
- */
+/* IAU 1980 nutation series; stern */
 
 #define NUT_SCALE 1e4
 #define NUT_SERIES 106
@@ -118,9 +103,7 @@ static short multarg[NUT_SERIES][5] = {
     {0, -1, 2, 0, 1},  {1, 1, 0, -2, 1},  {1, 0, -2, 2, 0},  {2, 0, 0, 2, 0},   {0, 0, 2, 4, 2},
     {0, 1, 0, 1, 0}};
 
-/* amplitudes which  have secular terms; in 1/NUT_SCALE arc seconds
- * {index, constant dPSI, T/10 in dPSI, constant in dEPS, T/10 in dEPS}
- */
+/* 1/NUT_SCALE arcsec: {index, dpsi, dpsi per T/10, deps, deps per T/10} */
 static long ampsecul[][5] = {{0, -171996, -1742, 92025, 89},
                              {1, 2062, 2, -895, 5},
                              {8, -13187, -16, 5736, -31},
@@ -141,10 +124,7 @@ static long ampsecul[][5] = {{0, -171996, -1742, 92025, 89},
                                  -1,
                              }};
 
-/* amplitudes which only have constant terms; same unit as above
- * {dPSI, dEPS}
- * indexes which are already in ampsecul[][] are zeroed
- */
+/* {dpsi, deps} in 1/NUT_SCALE arcsec; secular entries are zeroed */
 static short ampconst[NUT_SERIES][2] = {
     {0, 0},    {0, 0},    {46, -24},  {11, 0},    {-3, 1},   {-3, 0},  {-2, 1},   {1, 0},
     {0, 0},    {0, 0},    {0, 0},     {0, 0},     {0, 0},    {48, 1},  {-22, 0},  {0, 0},
@@ -161,20 +141,14 @@ static short ampconst[NUT_SERIES][2] = {
     {-1, 0},   {-1, 0},   {-1, 0},    {-1, 0},    {-1, 0},   {-1, 0},  {-1, 0},   {1, 0},
     {-1, 0},   {1, 0}};
 
-/* given the modified JD, mj, find the nutation in obliquity, *deps, and
- * the nutation in longitude, *dpsi, each in radians.
- */
-void nutation(double mj, double* deps, /* on input:  precision parameter in arc seconds */
-              double* dpsi) {
+/* compute nutation in obliquity (deps) and longitude (dpsi), in radians */
+void nutation(double mj, double* deps, double* dpsi) {
     static double lastmj = -10000, lastdeps, lastdpsi;
     double T, T2, T3, T10; /* jul cent since J2000 */
     double prec;           /* series precis in arc sec */
     int i, isecul;         /* index in term table */
     static double delcache[5][2 * NUT_MAXMUL + 1];
-    /* cache for multiples of delaunay args
-     * [M',M,F,D,Om][-min*x, .. , 0, .., max*x]
-     * make static to have unfilled fields cleared on init
-     */
+    /* delaunay multiples in radians, indexed by multiple + NUT_MAXMUL */
 
     if (fabs(mj - lastmj) < 1e-9) {
         *deps = lastdeps;
@@ -238,8 +212,6 @@ void nutation(double mj, double* deps, /* on input:  precision parameter in arc 
         if (fabs(ampcos) >= prec) lastdeps += ampcos * cos(arg);
     }
 
-    /* convert to radians.
-     */
     lastdpsi = degrad(lastdpsi / 3600. / NUT_SCALE);
     lastdeps = degrad(lastdeps / 3600. / NUT_SCALE);
 
@@ -248,9 +220,6 @@ void nutation(double mj, double* deps, /* on input:  precision parameter in arc 
     *dpsi = lastdpsi;
 }
 
-/* given the modified JD, mj, correct, IN PLACE, the right ascension *ra
- * and declination *dec (both in radians) for nutation.
- */
 void starfix_nutation(double mj, double* ra, double* dec) {
     static double lastmj = -10000;
     static double a[3][3]; /* rotation matrix */
@@ -263,29 +232,7 @@ void starfix_nutation(double mj, double* ra, double* dec) {
         obliquity(mj, &epsilon);
         nutation(mj, &deps, &dpsi);
 
-        /* the rotation matrix a applies the nutation correction to
-         * a vector of equatoreal coordinates Xeq to Xeq' by 3 subsequent
-         * rotations:  R1 - from equatoreal to ecliptic system by
-         * rotation of angle epsilon about x, R2 - rotate ecliptic
-         * system by -dpsi about its z, R3 - from ecliptic to equatoreal
-         * by rotation of angle -(epsilon + deps)
-         *
-         *	Xeq' = A * Xeq = R3 * R2 * R1 * Xeq
-         *
-         *		[ 1       0          0    ]
-         * R1 =	[ 0   cos(eps)   sin(eps) ]
-         *		[ 0  - sin(eps)  cos(eps) ]
-         *
-         *		[ cos(dpsi)  - sin(dpsi)  0 ]
-         * R2 =	[ sin(dpsi)   cos(dpsi)   0 ]
-         *		[      0           0      1 ]
-         *
-         *		[ 1         0                 0         ]
-         * R3 =	[ 0  cos(eps + deps)  - sin(eps + deps) ]
-         *		[ 0  sin(eps + deps)   cos(eps + deps)  ]
-         *
-         * for efficiency, here is a explicitely:
-         */
+        /* nutation: equatorial -> ecliptic -> shift longitude -> corrected equatorial */
 
         se = sin(epsilon);
         ce = cos(epsilon);
@@ -391,10 +338,7 @@ static void unrefractLT15(double pr, double tr, double aa, double* ta) {
     *ta = (aa < 0 && r < 0) ? aa : aa - r; /* 0 below ~5 degs */
 }
 
-/* correct the true altitude, ta, for refraction to the apparent altitude, aa,
- * each in radians, given the local atmospheric pressure, pr, in mbars, and
- * the temperature, tr, in degrees C.
- */
+/* invert unrefract by secant iteration; radians, mbar, celsius */
 void starfix_refract(double pr, double tr, double ta, double* aa) {
 #define MAXRERR degrad(0.1 / 3600.) /* desired accuracy, rads */
 
@@ -405,17 +349,13 @@ void starfix_refract(double pr, double tr, double ta, double* aa) {
         return;
     }
 
-    /* first guess of error is to go backwards.
-     * make use that we know delta-apparent is always < delta-true.
-     */
+    /* seed the apparent altitude by reversing the refraction correction */
     starfix_unrefract(pr, tr, ta, &t);
     d = 0.8 * (ta - t);
     t0 = t;
     a = ta;
 
-    /* use secant method to discover a value that unrefracts to ta.
-     * max=7 ave=2.4 loops in hundreds of test cases.
-     */
+    /* secant iteration finds an apparent altitude that unrefracts to ta */
     while (1) {
         a += d;
         starfix_unrefract(pr, tr, a, &t);

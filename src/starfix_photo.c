@@ -28,15 +28,14 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
         int ci = matches[i].centroid_idx, si = matches[i].catalog_idx;
         if (ci < 0 || ci >= num_centroids || si < 0 || (uint32_t)si >= num_stars)
             return STARFIX_ERR_INVALID_PARAM;
-        STARFIX_ASSERT_VALID_DOUBLE(centroids[ci].u);
-        STARFIX_ASSERT_VALID_DOUBLE(centroids[ci].v);
+        if (!isfinite(centroids[ci].u) || !isfinite(centroids[ci].v))
+            return STARFIX_ERR_DATA_CORRUPTION;
         double x = (centroids[ci].u - options->width / 2.0) / focal;
         double y = (centroids[ci].v - options->height / 2.0) / focal;
         norm = hypot(hypot(x, y), 1.0);
         camera[i] = (starfix_vector3_t){x / norm, y / norm, 1.0 / norm};
         double ra = starfix_catalog_ra(&catalog[si]), dec = starfix_catalog_dec(&catalog[si]);
-        STARFIX_ASSERT_VALID_DOUBLE(ra);
-        STARFIX_ASSERT_VALID_DOUBLE(dec);
+        if (!isfinite(ra) || !isfinite(dec)) return STARFIX_ERR_DATA_CORRUPTION;
         celestial[i] = (starfix_vector3_t){cos(dec) * cos(ra), cos(dec) * sin(ra), sin(dec)};
     }
 

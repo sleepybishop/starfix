@@ -2,7 +2,6 @@
 
 #include <math.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "starfix_astrometry.h"
@@ -14,17 +13,18 @@
 
 #define MAX_JACOBI_ITERS 50
 
-/* helper to compute eigenvalues and eigenvectors of a 4x4 symmetric matrix
-   using the jacobi eigenvalue method.
-   - A: input 4x4 symmetric matrix (destroyed during computation)
-   - V: output 4x4 matrix of eigenvectors (columns are eigenvectors)
-   - d: output 4-element array of eigenvalues */
+static void rotate(double* a, double* b, double c, double s) {
+    double x = *a, y = *b;
+    *a = c * x - s * y;
+    *b = s * x + c * y;
+}
+
+/* jacobi decomposition: destroys A; V holds eigenvectors as columns */
 static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
     int i, j, ip, iq;
     double c, s, t, theta, h, g, thresh;
     double b[4], z[4];
 
-    /* initialize V as identity matrix */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             V[i][j] = (i == j) ? 1.0 : 0.0;
@@ -33,7 +33,6 @@ static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
         z[i] = 0.0;
     }
 
-    /* run jacobi iterations */
     for (i = 1; i <= MAX_JACOBI_ITERS; i++) {
         double sum_off = 0.0;
         for (ip = 0; ip < 3; ip++) {
@@ -42,17 +41,11 @@ static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
             }
         }
 
-        /* check for convergence */
         if (sum_off < 1e-15) {
-            return STARFIX_SUCCESS; /* converged */
+            return STARFIX_SUCCESS;
         }
 
-        /* threshold for rotation */
-        if (i < 4) {
-            thresh = 0.2 * sum_off / 16.0;
-        } else {
-            thresh = 0.0;
-        }
+        thresh = i < 4 ? 0.2 * sum_off / 16.0 : 0.0;
 
         for (ip = 0; ip < 3; ip++) {
             for (iq = ip + 1; iq < 4; iq++) {
@@ -83,32 +76,18 @@ static int jacobi_4x4(double A[4][4], double V[4][4], double d[4]) {
                     d[iq] += h;
                     A[ip][iq] = 0.0;
 
-                    /* rotate rows ip and iq */
                     for (j = 0; j < ip; j++) {
-                        g = A[j][ip];
-                        h = A[j][iq];
-                        A[j][ip] = c * g - s * h;
-                        A[j][iq] = s * g + c * h;
+                        rotate(&A[j][ip], &A[j][iq], c, s);
                     }
                     for (j = ip + 1; j < iq; j++) {
-                        g = A[ip][j];
-                        h = A[j][iq];
-                        A[ip][j] = c * g - s * h;
-                        A[j][iq] = s * g + c * h;
+                        rotate(&A[ip][j], &A[j][iq], c, s);
                     }
                     for (j = iq + 1; j < 4; j++) {
-                        g = A[ip][j];
-                        h = A[iq][j];
-                        A[ip][j] = c * g - s * h;
-                        A[iq][j] = s * g + c * h;
+                        rotate(&A[ip][j], &A[iq][j], c, s);
                     }
 
-                    /* accumulate eigenvectors in V */
                     for (j = 0; j < 4; j++) {
-                        g = V[j][ip];
-                        h = V[j][iq];
-                        V[j][ip] = c * g - s * h;
-                        V[j][iq] = s * g + c * h;
+                        rotate(&V[j][ip], &V[j][iq], c, s);
                     }
                 }
             }
@@ -130,91 +109,52 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
     int i, j, k;
 
     if (num_stars < 2) {
-        return STARFIX_ERR_INVALID_PARAM; /* need at least 2 stars */
+        return STARFIX_ERR_INVALID_PARAM;
     }
     if (w == NULL || v == NULL || q_est == NULL || R_est == NULL) {
         return STARFIX_ERR_ATTITUDE_DEGENERATE;
     }
 
-    /* 1. compute 3x3 covariance matrix B */
-    double B[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    double B[3][3] = {{0}};
     for (i = 0; i < num_stars; i++) {
-        B[0][0] += w[i].x * v[i].x;
-        B[0][1] += w[i].x * v[i].y;
-        B[0][2] += w[i].x * v[i].z;
-
-        B[1][0] += w[i].y * v[i].x;
-        B[1][1] += w[i].y * v[i].y;
-        B[1][2] += w[i].y * v[i].z;
-
-        B[2][0] += w[i].z * v[i].x;
-        B[2][1] += w[i].z * v[i].y;
-        B[2][2] += w[i].z * v[i].z;
+        double camera[3] = {w[i].x, w[i].y, w[i].z};
+        double catalog[3] = {v[i].x, v[i].y, v[i].z};
+        for (j = 0; j < 3; j++)
+            for (k = 0; k < 3; k++) B[j][k] += camera[j] * catalog[k];
     }
 
-    /* 2. compute matrix trace sigma and symmetric S */
+    /* davenport's K for the catalog-to-camera attitude */
     double sigma = B[0][0] + B[1][1] + B[2][2];
-    double S[3][3];
-    for (j = 0; j < 3; j++) {
-        for (k = 0; k < 3; k++) {
-            S[j][k] = B[j][k] + B[k][j];
-        }
-    }
-
-    /* 3. compute vector Z */
-    double Z[3];
-    Z[0] = B[2][1] - B[1][2];
-    Z[1] = B[0][2] - B[2][0];
-    Z[2] = B[1][0] - B[0][1];
-
-    /* 4. construct Davenport's K matrix (4x4 symmetric) */
+    double Z[3] = {B[2][1] - B[1][2], B[0][2] - B[2][0], B[1][0] - B[0][1]};
     double K_mat[4][4];
     K_mat[0][0] = sigma;
-    K_mat[0][1] = Z[0];
-    K_mat[0][2] = Z[1];
-    K_mat[0][3] = Z[2];
+    for (j = 0; j < 3; j++) {
+        K_mat[0][j + 1] = K_mat[j + 1][0] = Z[j];
+        for (k = 0; k < 3; k++) K_mat[j + 1][k + 1] = B[j][k] + B[k][j];
+        K_mat[j + 1][j + 1] -= sigma;
+    }
 
-    K_mat[1][0] = Z[0];
-    K_mat[1][1] = S[0][0] - sigma;
-    K_mat[1][2] = S[0][1];
-    K_mat[1][3] = S[0][2];
-
-    K_mat[2][0] = Z[1];
-    K_mat[2][1] = S[1][0];
-    K_mat[2][2] = S[1][1] - sigma;
-    K_mat[2][3] = S[1][2];
-
-    K_mat[3][0] = Z[2];
-    K_mat[3][1] = S[2][0];
-    K_mat[3][2] = S[2][1];
-    K_mat[3][3] = S[2][2] - sigma;
-
-    /* 5. find eigenvalues and eigenvectors of K */
     double V_eig[4][4];
     double eigenvalues[4];
     int status = jacobi_4x4(K_mat, V_eig, eigenvalues);
 
     if (status < 0) {
-        return status; /* solver error */
+        return status;
     }
 
-    /* 6. find eigenvector corresponding to largest eigenvalue */
+    /* the largest eigenvalue gives the least-squares attitude */
     int max_idx = 0;
-    double max_val = eigenvalues[0];
     for (i = 1; i < 4; i++) {
-        if (eigenvalues[i] > max_val) {
-            max_val = eigenvalues[i];
+        if (eigenvalues[i] > eigenvalues[max_idx]) {
             max_idx = i;
         }
     }
 
-    /* extract quaternion (eigenvector) */
     double q0 = V_eig[0][max_idx];
     double q1 = V_eig[1][max_idx];
     double q2 = V_eig[2][max_idx];
     double q3 = V_eig[3][max_idx];
 
-    /* normalize quaternion */
     double q_norm = sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
     if (q_norm > 1e-12) {
         q0 /= q_norm;
@@ -236,7 +176,6 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
     q_est->q[2] = q2;
     q_est->q[3] = q3;
 
-    /* 7. convert quaternion to 3x3 rotation matrix */
     R_est[0][0] = 1.0 - 2.0 * (q2 * q2 + q3 * q3);
     R_est[0][1] = 2.0 * (q1 * q2 - q0 * q3);
     R_est[0][2] = 2.0 * (q1 * q3 + q0 * q2);
@@ -265,14 +204,10 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
     if (!isfinite(threshold_deg) || threshold_deg <= 0.0 || threshold_deg >= 180.0) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    int _i;
-    for (_i = 0; _i < num_stars; _i++) {
-        STARFIX_ASSERT_VALID_DOUBLE(w[_i].x);
-        STARFIX_ASSERT_VALID_DOUBLE(w[_i].y);
-        STARFIX_ASSERT_VALID_DOUBLE(w[_i].z);
-        STARFIX_ASSERT_VALID_DOUBLE(v[_i].x);
-        STARFIX_ASSERT_VALID_DOUBLE(v[_i].y);
-        STARFIX_ASSERT_VALID_DOUBLE(v[_i].z);
+    for (int i = 0; i < num_stars; i++) {
+        if (!isfinite(w[i].x) || !isfinite(w[i].y) || !isfinite(w[i].z) || !isfinite(v[i].x) ||
+            !isfinite(v[i].y) || !isfinite(v[i].z))
+            return STARFIX_ERR_DATA_CORRUPTION;
     }
 
     /* Convert threshold to cosine value to avoid calling acos() inside the loop */
@@ -295,7 +230,6 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
 
     int iter;
     for (iter = 0; iter < max_iterations; iter++) {
-        /* 1. randomly sample 2 distinct indices */
         int idx1 = rand() % num_stars;
         int idx2 = rand() % num_stars;
         while (idx2 == idx1 && num_stars > 1) {
@@ -307,13 +241,11 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
         v_sample[0] = v[idx1];
         v_sample[1] = v[idx2];
 
-        /* 2. fit attitude model to sample */
         int status = starfix_solve_attitude(2, w_sample, v_sample, &q_tmp, R_tmp);
         if (status < 0) {
             continue;
         }
 
-        /* 3. count inliers */
         int current_inlier_count = 0;
         int i;
         for (i = 0; i < num_stars; i++) {
@@ -322,14 +254,12 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
             double ry = R_tmp[1][0] * v[i].x + R_tmp[1][1] * v[i].y + R_tmp[1][2] * v[i].z;
             double rz = R_tmp[2][0] * v[i].x + R_tmp[2][1] * v[i].y + R_tmp[2][2] * v[i].z;
 
-            /* dot product with observed vector */
             double dot = rx * w[i].x + ry * w[i].y + rz * w[i].z;
             if (dot >= cos_threshold) {
                 current_inliers[current_inlier_count++] = i;
             }
         }
 
-        /* 4. update best model if we found more inliers */
         if (current_inlier_count > best_inlier_count) {
             best_inlier_count = current_inlier_count;
             int k_in;
@@ -343,7 +273,7 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
         telem->ransac_iterations = (uint32_t)max_iterations;
     }
 
-    /* 5. re-fit using all inliers in the best set */
+    /* refit using all inliers in the best set */
     if (best_inlier_count >= 2) {
         starfix_vector3_t* w_inliers =
             starfix_alloc_array(arena, starfix_vector3_t, (size_t)best_inlier_count);
@@ -391,10 +321,8 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
 
     int i;
     for (i = 0; i < num_stars; i++) {
-        /* Dot product to get cosine of apparent Zenith angle */
         double cos_theta = w[i].x * z_cam->x + w[i].y * z_cam->y + w[i].z * z_cam->z;
 
-        /* Clamp to valid range */
         if (cos_theta > 1.0) cos_theta = 1.0;
         if (cos_theta < -1.0) cos_theta = -1.0;
 
@@ -402,8 +330,7 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
         double alt_a = M_PI / 2.0 - theta_a;
         double alt_t;
 
-        /* Only correct if angle is not completely at Zenith (where refraction is zero)
-           and not close to horizon or below it */
+        /* refraction vanishes at zenith; the model requires positive altitude */
         if (theta_a > 1e-6 && alt_a > 0.0) {
             starfix_unrefract(press_hpa, temp_c, alt_a, &alt_t);
             double theta_t = M_PI / 2.0 - alt_t;
@@ -424,7 +351,6 @@ int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfi
                 w[i].y = cos(theta_t) * z_cam->y + sin(theta_t) * uy;
                 w[i].z = cos(theta_t) * z_cam->z + sin(theta_t) * uz;
 
-                /* Normalize */
                 double w_norm = sqrt(w[i].x * w[i].x + w[i].y * w[i].y + w[i].z * w[i].z);
                 if (w_norm > 1e-12) {
                     w[i].x /= w_norm;

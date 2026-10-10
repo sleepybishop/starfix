@@ -10,7 +10,6 @@
 #define MAX_STAR_PIXELS 300
 #define MAX_BFS_ITERS 1500
 
-/* helper to sort centroids in place (flux descending) */
 static int compare_centroids(const void* a, const void* b) {
     const starfix_centroid_t* ca = (const starfix_centroid_t*)a;
     const starfix_centroid_t* cb = (const starfix_centroid_t*)b;
@@ -36,11 +35,9 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
     if ((size_t)width > SIZE_MAX / (size_t)height || width > INT_MAX / height) {
         return STARFIX_ERR_INVALID_PARAM;
     }
-    /* Note: visited_mask can be NULL if the user wants an unoptimized single-shot run */
     int count = 0;
     int x, y, dx, dy;
 
-    /* allocate visited mask dynamically only if user didn't provide a persistent one */
     uint32_t* visited = visited_mask;
     int owns_visited = 0;
     if (visited == NULL) {
@@ -49,13 +46,11 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
         owns_visited = 1;
         frame_number = 1; /* first frame */
     } else if (frame_number == 0) {
-        /* Generation zero collides with a zero-initialized mask. Clear on wrap and
-         * restart at generation one; this is paid only once per uint32_t cycle. */
+        /* generation zero collides with a cleared mask; restart at one on wrap */
         memset(visited, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
         frame_number = 1;
     }
 
-    /* static buffers for the flood fill bfs queue to avoid dynamic allocation in loop */
     int queue_x[MAX_BLOB_PIXELS];
     int queue_y[MAX_BLOB_PIXELS];
 
@@ -63,7 +58,6 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
         for (x = 0; x < width; x++) {
             int idx = y * width + x;
 
-            /* start a new connected component if we find a bright unvisited pixel */
             if (image[idx] > threshold && visited[idx] != frame_number) {
                 int head = 0;
                 int tail = 1;
@@ -80,7 +74,6 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
                 int peak_y = y;
 
                 int bfs_iters = 0;
-                /* run bfs flood fill */
                 while (head < tail && bfs_iters < MAX_BFS_ITERS) {
                     bfs_iters++;
                     int cx = queue_x[head];
@@ -107,7 +100,6 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
                             if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                                 int n_idx = ny * width + nx;
                                 if (image[n_idx] > threshold && visited[n_idx] != frame_number) {
-                                    /* check queue capacity limit to avoid buffer overflow */
                                     if (tail < MAX_BLOB_PIXELS) {
                                         visited[n_idx] = frame_number;
                                         queue_x[tail] = nx;
@@ -120,7 +112,6 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
                     }
                 }
 
-                /* validate star blob size */
                 if (sum_intensity > 0.0 && tail <= MAX_STAR_PIXELS) {
                     if (count < max_centroids) {
                         double u_com = sum_u / sum_intensity;

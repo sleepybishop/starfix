@@ -165,7 +165,6 @@ static int find_first_hash_entry(uint32_t key, const starfix_hash_entry_t* entri
     return result;
 }
 
-/* sorting helper for angles */
 static void sort_angles(double* angles, int* indices, int n) {
     int i, j;
 
@@ -183,8 +182,7 @@ static void sort_angles(double* angles, int* indices, int n) {
     }
 }
 
-/* Validate a hash seed with a proper rotation and unique additional catalog matches.
- * At most 20 observations are passed by the caller; scratch storage stays on the stack. */
+/* verify a proper rotation and unique extra matches for at most 20 observations */
 static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_t v_seed[4],
                        int num_observed, const double observed[][3], uint32_t num_stars,
                        const starfix_vector3_t* catalog_vectors, double verify_cos,
@@ -193,8 +191,7 @@ static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_
     double R[3][3];
     starfix_quaternion_t q;
     if (starfix_solve_attitude(4, w_seed, v_seed, &q, R) != STARFIX_SUCCESS) return 0;
-    /* Distances alone also match mirrored patterns. A proper
-     * rotation must explain every seed before searching further. */
+    /* reject mirrored seeds before searching for additional matches */
     int seed_valid = 1;
     for (seed = 0; seed < 4; seed++) {
         starfix_vector3_t v = v_seed[seed], w = w_seed[seed];
@@ -278,7 +275,6 @@ starfix_status_t starfix_identify_stars(
     }
 
     if (attitude_hint != NULL) {
-        /* TRACKING MODE */
         int num_matches = 0;
         int centroid_used[20] = {0};
         double match_tol_rad = 0.5 * M_PI / 180.0;
@@ -343,8 +339,7 @@ starfix_status_t starfix_identify_stars(
         cam_vecs[i][2] = all_cam_vecs[i][2];
     }
 
-    /* The compact database may contain only one visible quad. Validate each seed
-     * against additional image stars instead of requiring repeated quad votes. */
+    /* a catalog may have just one visible quad; validate with extra stars instead of quad votes */
     starfix_vector3_t* catalog_vectors = starfix_alloc_array(arena, starfix_vector3_t, num_stars);
     if (catalog_vectors == NULL) return STARFIX_ERR_MEMORY;
     for (j = 0; j < (int)num_stars; j++) {
@@ -368,7 +363,6 @@ starfix_status_t starfix_identify_stars(
 
     double angle_tolerance = 0.5 * M_PI / 180.0; /* 0.5 degrees tolerance for real sensors */
 
-    /* 3. generate all combinations of 4 centroids (quads) */
     int a, b, c, d;
     for (a = 0; a < n_test; a++) {
         for (b = a + 1; b < n_test; b++) {
@@ -398,7 +392,6 @@ starfix_status_t starfix_identify_stars(
                         }
                     }
 
-                    /* sort angles */
                     int sorted_idx[6] = {0, 1, 2, 3, 4, 5};
                     sort_angles(cam_angles, sorted_idx, 6);
 
@@ -449,7 +442,6 @@ starfix_status_t starfix_identify_stars(
                             find_first_hash_entry(search_keys[k], hash_entries, num_entries);
                         if (entry_idx < 0) continue;
 
-                        /* scan all matching database entries */
                         int hash_scans = 0;
                         while (entry_idx < (int)num_entries &&
                                hash_entries[entry_idx].hash_key == search_keys[k] &&
@@ -457,7 +449,6 @@ starfix_status_t starfix_identify_stars(
                             hash_scans++;
                             const starfix_hash_entry_t* cand = &hash_entries[entry_idx];
 
-                            /* extract candidate star unit vectors */
                             double cat_vecs[4][3];
                             int candidate_valid = 1;
                             for (i = 0; i < 4; i++) {
@@ -501,13 +492,10 @@ starfix_status_t starfix_identify_stars(
                                 int valid = 1;
                                 int pair;
                                 for (pair = 0; pair < 6; pair++) {
-                                    /* get camera frame angle and pair mapping indices */
                                     double c_angle = cam_angles[pair];
                                     int u_p1 = cam_angle_pairs[sorted_idx[pair]][0];
                                     int u_p2 = cam_angle_pairs[sorted_idx[pair]][1];
 
-                                    /* map camera frame indices to catalog indices under permutation
-                                     * p */
                                     int cat_p1 = perms[p][u_p1];
                                     int cat_p2 = perms[p][u_p2];
 

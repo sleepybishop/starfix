@@ -9,7 +9,6 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* helper to convert degrees to radians */
 static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 
 starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double init_lon) {
@@ -27,7 +26,6 @@ starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double
     filter->scale = 1.0;
     filter->bias = 0.0;
 
-    /* initialize covariance matrix P */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             filter->P[i][j] = 0.0;
@@ -40,7 +38,6 @@ starfix_status_t starfix_ekf_init(starfix_ekf_t* filter, double init_lat, double
     filter->P[2][2] = 0.15 * 0.15;
     filter->P[3][3] = deg_to_rad(10.0) * deg_to_rad(10.0);
 
-    /* process noise Q */
     filter->Q[0] = 1e-12; /* lat drift variance per step */
     filter->Q[1] = 1e-12; /* lon drift variance per step */
     filter->Q[2] = 1e-10; /* scale factor drift variance */
@@ -69,7 +66,6 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     double dist_nm = corrected_speed * dt_sec / 3600.0;
     double lat_rad = deg_to_rad(filter->lat);
 
-    /* compute state prediction updates */
     double pred_d_lat = dist_nm * cos(corrected_heading) / 60.0;
     double pred_d_lon = dist_nm * sin(corrected_heading) / (60.0 * cos(lat_rad));
 
@@ -78,7 +74,6 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     while (filter->lon > 180.0) filter->lon -= 360.0;
     while (filter->lon < -180.0) filter->lon += 360.0;
 
-    /* compute Jacobian matrix F */
     double F[4][4] = {
         {1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}, {0.0, 0.0, 1.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
 
@@ -93,7 +88,6 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
     double FP[4][4];
     int i, j, k;
 
-    /* compute FP = F * P */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             FP[i][j] = 0.0;
@@ -112,7 +106,6 @@ starfix_status_t starfix_ekf_predict(starfix_ekf_t* filter, double speed_knots, 
             }
             filter->P[i][j] = val;
         }
-        /* add process noise Q to diagonal */
         filter->P[i][i] += filter->Q[i];
     }
     return STARFIX_SUCCESS;
@@ -135,14 +128,12 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     double P_next[4][4];
     int i, j, k;
 
-    /* compute innovation covariance S = H * P * H^T + R */
-    /* since H = [ [1, 0, 0, 0], [0, 1, 0, 0] ], S is just top-left 2x2 of P + R */
+    /* H selects lat/lon, so S is the top-left 2x2 of P plus R */
     S[0][0] = filter->P[0][0] + filter->R[0];
     S[0][1] = filter->P[0][1];
     S[1][0] = filter->P[1][0];
     S[1][1] = filter->P[1][1] + filter->R[1];
 
-    /* invert 2x2 matrix S */
     double det = S[0][0] * S[1][1] - S[0][1] * S[1][0];
     if (fabs(det) < 1e-12) {
         return STARFIX_ERR_SOLVER_SINGULAR; /* singular matrix, skip update */
@@ -153,15 +144,13 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     S_inv[1][0] = -S[1][0] / det;
     S_inv[1][1] = S[0][0] / det;
 
-    /* compute Kalman Gain K = P * H^T * S_inv */
-    /* P * H^T is the 4x2 matrix representing first two columns of P */
+    /* K = P H^T S^-1, using the first two columns of P */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 2; j++) {
             K[i][j] = filter->P[i][0] * S_inv[0][j] + filter->P[i][1] * S_inv[1][j];
         }
     }
 
-    /* compute innovation y = z - H * x */
     double y[2];
     y[0] = celestial_lat - filter->lat;
     y[1] = celestial_lon - filter->lon;
@@ -180,22 +169,19 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     while (filter->lon > 180.0) filter->lon -= 360.0;
     while (filter->lon < -180.0) filter->lon += 360.0;
 
-    /* compute covariance update: P = (I - K * H) * P */
-    /* K * H is 4x4 matrix with K's columns in first two columns, rest zeros */
+    /* P = (I - K H) P; H selects the first two state components */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             KH[i][j] = (j < 2) ? K[i][j] : 0.0;
         }
     }
 
-    /* compute I - KH */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             I_KH[i][j] = (i == j ? 1.0 : 0.0) - KH[i][j];
         }
     }
 
-    /* compute P_next = (I - KH) * P */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             P_next[i][j] = 0.0;

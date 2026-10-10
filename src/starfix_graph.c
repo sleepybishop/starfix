@@ -13,23 +13,158 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* helper to convert degrees to radians */
 static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 
 typedef struct {
-    int row;
-    int col;
+    int count;
+    int cols[6];
+    double values[6];
+    double residual, weight;
+} factor_t;
+
+typedef struct {
+    int row, col;
     double value;
 } normal_term_t;
 
 static int compare_normal_terms(const void* lhs, const void* rhs) {
-    const normal_term_t* a = (const normal_term_t*)lhs;
-    const normal_term_t* b = (const normal_term_t*)rhs;
+    const normal_term_t* a = lhs;
+    const normal_term_t* b = rhs;
     if (a->row < b->row) return -1;
     if (a->row > b->row) return 1;
-    if (a->col < b->col) return -1;
-    if (a->col > b->col) return 1;
-    return 0;
+    return (a->col > b->col) - (a->col < b->col);
+}
+
+static factor_t scalar_factor(int col, double residual, double sigma) {
+    return (factor_t){1, {col}, {1.0}, residual, 1.0 / sigma};
+}
+
+static void initialize_trajectory(int nodes, int steps, double dt, const starfix_odometry_t* odom,
+                                  double lat, double lon, double scale, double bias, double* x) {
+    x[0] = lat;
+    x[1] = lon;
+    for (int i = 1; i <= nodes; i++) {
+        for (int j = 0; j < steps; j++) {
+            const starfix_odometry_t* o = &odom[(i - 1) * steps + j];
+            double distance = o->speed * dt / (3600.0 * scale);
+            double heading = deg_to_rad(o->heading) - bias;
+            double dlat = distance * cos(heading) / 60.0;
+            double dlon = distance * sin(heading) / (60.0 * cos(deg_to_rad(lat)));
+            lat += dlat;
+            lon += dlon;
+        }
+        x[2 * i] = lat;
+        x[2 * i + 1] = lon;
+    }
+    x[2 * nodes + 2] = scale;
+    x[2 * nodes + 3] = bias;
+}
+
+static void linearize(int nodes, int steps, double dt, const starfix_odometry_t* odom,
+                      int num_fixes, const starfix_fix_t* fixes, double lat, double lon,
+                      const double* x, factor_t* factors) {
+    int s = 2 * nodes + 2, b = s + 1;
+    *factors++ = scalar_factor(0, x[0] - lat, 0.5);
+    *factors++ = scalar_factor(1, x[1] - lon, 0.5);
+    *factors++ = scalar_factor(s, x[s] - 1.0, 0.15);
+    *factors++ = scalar_factor(b, x[b], deg_to_rad(10.0));
+
+    double scale = x[s];
+    if (scale < 1e-6) scale = 1e-6;
+    for (int i = 1; i <= nodes; i++) {
+        int prev = 2 * (i - 1), curr = 2 * i;
+        double north = 0.0, east = 0.0;
+        for (int j = 0; j < steps; j++) {
+            const starfix_odometry_t* o = &odom[(i - 1) * steps + j];
+            double heading = deg_to_rad(o->heading) - x[b];
+            double distance = o->speed * dt / 3600.0;
+            north += distance * cos(heading);
+            east += distance * sin(heading);
+        }
+
+        double mid = deg_to_rad((x[prev] + x[curr]) / 2.0);
+        double cos_mid = cos(mid);
+        if (fabs(cos_mid) < 1e-6) cos_mid = 1e-6;
+        /* scale is measured speed / true speed, matching the EKF */
+        double dlat = north / (60.0 * scale);
+        double dlon = east / (60.0 * cos_mid * scale);
+        double dlon_dlat = -dlon * tan(mid) * 0.5 * (M_PI / 180.0);
+        double weight = 1.0 / (0.2 / 60.0); /* 0.2 arcmin odometry sigma */
+        *factors++ = (factor_t){4,
+                                {prev, curr, s, b},
+                                {-1.0, 1.0, dlat / scale, -east / (60.0 * scale)},
+                                x[curr] - x[prev] - dlat,
+                                weight};
+        *factors++ = (factor_t){
+            6,
+            {prev, prev + 1, curr, curr + 1, s, b},
+            {dlon_dlat, -1.0, dlon_dlat, 1.0, dlon / scale, north / (60.0 * cos_mid * scale)},
+            x[curr + 1] - x[prev + 1] - dlon,
+            weight};
+    }
+
+    for (int i = 0; i < num_fixes; i++) {
+        int col = 2 * fixes[i].node_idx;
+        *factors++ = scalar_factor(col, x[col] - fixes[i].lat, 3.5 / 60.0);
+        *factors++ = scalar_factor(col + 1, x[col + 1] - fixes[i].lon, 3.5 / 60.0);
+    }
+}
+
+/* accumulate J^T J and -J^T r in factor order; columns in each factor are sorted */
+static ptrdiff_t normal_equations(int count, const factor_t* factors, normal_term_t* terms,
+                                  double* rhs) {
+    ptrdiff_t used = 0;
+    for (int k = 0; k < count; k++) {
+        const factor_t* f = &factors[k];
+        double values[6];
+        double residual = -(f->residual * f->weight);
+        for (int i = 0; i < f->count; i++) values[i] = f->values[i] * f->weight;
+        for (int i = 0; i < f->count; i++) {
+            if (!(fabs(values[i]) > 0.0)) continue;
+            rhs[f->cols[i]] += values[i] * residual;
+            for (int j = 0; j < f->count; j++) {
+                if (!(fabs(values[j]) > 0.0)) continue;
+                terms[used++] = (normal_term_t){f->cols[i], f->cols[j], values[i] * values[j]};
+            }
+        }
+    }
+    return used;
+}
+
+static int pack_normal_matrix(int n, ptrdiff_t count, normal_term_t* terms, double* values,
+                              int* cols, int* rows) {
+    qsort(terms, (size_t)count, sizeof(*terms), compare_normal_terms);
+    double norm = 0.0;
+    ptrdiff_t at = 0;
+    int nnz = 0;
+    for (int row = 0; row < n; row++) {
+        rows[row] = nnz;
+        double row_sum = 0.0;
+        while (at < count && terms[at].row == row) {
+            int col = terms[at].col;
+            double sum = 0.0;
+            do {
+                sum += terms[at++].value;
+            } while (at < count && terms[at].row == row && terms[at].col == col);
+            if (fabs(sum) > 1e-15) {
+                values[nnz] = sum;
+                cols[nnz++] = col;
+                row_sum += fabs(sum);
+            }
+        }
+        if (row_sum > norm) norm = row_sum;
+    }
+    rows[n] = nnz;
+
+    /* tikhonov regularization requires a diagonal entry for every state */
+    double epsilon = norm > 1e-12 ? norm * 1e-8 : 1e-8;
+    for (int row = 0; row < n; row++) {
+        int j = rows[row], end = rows[row + 1];
+        while (j < end && cols[j] != row) j++;
+        if (j == end) return STARFIX_ERR_SOLVER_SINGULAR;
+        values[j] += epsilon;
+    }
+    return nnz;
 }
 
 starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double dt_sec,
@@ -38,8 +173,6 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
                                      const starfix_fix_t* fixes, starfix_pose_t* poses,
                                      double* est_scale, double* est_bias, starfix_arena_t* arena,
                                      starfix_telemetry_t* telem) {
-    int i, j, k, iter;
-
     if (num_nodes <= 0 || steps_per_node <= 0 || num_fixes < 0 || !isfinite(dt_sec) ||
         dt_sec <= 0.0 || !isfinite(initial_lat) || !isfinite(initial_lon) || odom == NULL ||
         poses == NULL || est_scale == NULL || est_bias == NULL || arena == NULL ||
@@ -54,328 +187,76 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
     }
 
     int total_steps = num_nodes * steps_per_node;
-    for (i = 0; i < total_steps; i++) {
+    for (int i = 0; i < total_steps; i++) {
         if (!isfinite(odom[i].speed) || !isfinite(odom[i].heading)) {
             return STARFIX_ERR_DATA_CORRUPTION;
         }
     }
-    for (i = 0; i < num_fixes; i++) {
+    for (int i = 0; i < num_fixes; i++) {
         if (fixes[i].node_idx < 0 || fixes[i].node_idx > num_nodes || !isfinite(fixes[i].lat) ||
             !isfinite(fixes[i].lon)) {
             return STARFIX_ERR_INVALID_PARAM;
         }
     }
 
-    int N = 2 * (num_nodes + 1) + 2;
-    int M = 4 + 2 * num_nodes + 2 * num_fixes;
-    uint64_t max_terms_u64 =
-        (uint64_t)N + 4U + 52U * (uint64_t)num_nodes + 2U * (uint64_t)num_fixes;
-    if (max_terms_u64 > (uint64_t)PTRDIFF_MAX) return STARFIX_ERR_INVALID_PARAM;
-    ptrdiff_t max_normal_terms = (ptrdiff_t)max_terms_u64;
+    int n = 2 * (num_nodes + 1) + 2;
+    int m = 4 + 2 * num_nodes + 2 * num_fixes;
+    /* four priors, 4x4 + 6x6 terms per interval, and two terms per fix */
+    uint64_t capacity = 4ULL + 52U * (uint64_t)num_nodes + 2U * (uint64_t)num_fixes;
+    if (capacity > (uint64_t)PTRDIFF_MAX) return STARFIX_ERR_INVALID_PARAM;
+    ptrdiff_t max_terms = (ptrdiff_t)capacity;
 
-    /* allocate state vector X */
-    double* X = starfix_alloc_array(arena, double, (size_t)N);
-    /* allocate Jacobian matrix J (M x N) and residuals vector r (M) */
-    double* J = starfix_alloc_array(arena, double, (size_t)M*(size_t)N);
-    double* r = starfix_alloc_array(arena, double, (size_t)M);
-    double* b = starfix_alloc_array(arena, double, (size_t)M);
-    double* W = starfix_alloc_array(arena, double, (size_t)M);
-    double* delta_X = starfix_alloc_array(arena, double, (size_t)N);
-
-    /* Fixed-size scratch buffers are allocated once and reused on every iteration. */
-    double* d_vec = starfix_alloc_array(arena, double, (size_t)N);
-    normal_term_t* normal_terms = starfix_alloc_array(arena, normal_term_t, max_normal_terms);
-    double* val = starfix_alloc_array(arena, double, max_normal_terms);
-    int* col_ind = starfix_alloc_array(arena, int, max_normal_terms);
-    int* row_ptr = starfix_alloc_array(arena, int, (size_t)N + 1);
-    double* lb = starfix_alloc_array(arena, double, (size_t)N);
-    double* ub = starfix_alloc_array(arena, double, (size_t)N);
-    int nanoqsp_ws_size = 65536;
-    double* nanoqsp_ws = starfix_alloc_array(arena, double, nanoqsp_ws_size);
-
-    if (X == NULL || J == NULL || r == NULL || b == NULL || W == NULL || delta_X == NULL ||
-        d_vec == NULL || normal_terms == NULL || val == NULL || col_ind == NULL ||
-        row_ptr == NULL || lb == NULL || ub == NULL || nanoqsp_ws == NULL) {
+    double* x = starfix_alloc_array(arena, double, n);
+    factor_t* factors = starfix_alloc_array(arena, factor_t, m);
+    double* delta = starfix_alloc_array(arena, double, n);
+    double* rhs = starfix_alloc_array(arena, double, n);
+    normal_term_t* terms = starfix_alloc_array(arena, normal_term_t, max_terms);
+    double* values = starfix_alloc_array(arena, double, max_terms);
+    int* cols = starfix_alloc_array(arena, int, max_terms);
+    int* rows = starfix_alloc_array(arena, int, n + 1);
+    NanoqspCSR matrix = {.n = n, .values = values, .col_indices = cols, .row_ptr = rows};
+    double* lower = starfix_alloc_array(arena, double, n);
+    double* upper = starfix_alloc_array(arena, double, n);
+    NanoqspConfig config = {.strategy = NANOQSP_STRATEGY_SPECTRAL_GRADIENT,
+                            .max_iterations = 2000,
+                            .tolerance = 1e-9,
+                            .workspace = starfix_alloc_array(arena, double, 65536),
+                            .workspace_size = 65536};
+    if (!x || !factors || !delta || !rhs || !terms || !values || !cols || !rows || !lower ||
+        !upper || !config.workspace)
         return STARFIX_ERR_MEMORY;
+    for (int i = 0; i < n; i++) {
+        lower[i] = -0.2;
+        upper[i] = 0.2;
     }
 
-    double step_bound = 0.2;
-    for (i = 0; i < N; i++) {
-        lb[i] = -step_bound;
-        ub[i] = step_bound;
-    }
+    initialize_trajectory(num_nodes, steps_per_node, dt_sec, odom, initial_lat, initial_lon,
+                          *est_scale, *est_bias, x);
+    int iterations = 0;
+    while (iterations < 10) {
+        linearize(num_nodes, steps_per_node, dt_sec, odom, num_fixes, fixes, initial_lat,
+                  initial_lon, x, factors);
+        memset(rhs, 0, (size_t)n * sizeof(*rhs));
+        ptrdiff_t count = normal_equations(m, factors, terms, rhs);
+        matrix.nnz = pack_normal_matrix(n, count, terms, values, cols, rows);
+        if (matrix.nnz < 0) return matrix.nnz;
 
-    /* 1. initialize state vector X using raw dead reckoning */
-    X[0] = initial_lat;
-    X[1] = initial_lon;
-
-    double dr_lat = initial_lat;
-    double dr_lon = initial_lon;
-
-    double initial_scale = *est_scale;
-    double initial_bias = *est_bias;
-    for (i = 1; i <= num_nodes; i++) {
-        int start_step = (i - 1) * steps_per_node;
-        for (j = 0; j < steps_per_node; j++) {
-            int s_idx = start_step + j;
-            double dist_nm = odom[s_idx].speed * dt_sec / (3600.0 * initial_scale);
-            double dr_lat_rad = deg_to_rad(dr_lat);
-            double heading_rad = deg_to_rad(odom[s_idx].heading) - initial_bias;
-            double d_lat = dist_nm * cos(heading_rad) / 60.0;
-            double d_lon = dist_nm * sin(heading_rad) / (60.0 * cos(dr_lat_rad));
-            dr_lat += d_lat;
-            dr_lon += d_lon;
-        }
-        X[2 * i] = dr_lat;
-        X[2 * i + 1] = dr_lon;
-    }
-
-    X[N - 2] = initial_scale; /* measured speed / true speed */
-    X[N - 1] = initial_bias;  /* compass heading bias initial guess */
-
-    /* standard deviation uncertainties */
-    double sigma_prior_pos = 0.5; /* deg */
-    double sigma_prior_scale = 0.15;
-    double sigma_prior_bias = deg_to_rad(10.0);
-
-    double sigma_odom_lat = 0.2 / 60.0; /* deg per keyframe */
-    double sigma_odom_lon = 0.2 / 60.0;
-
-    double sigma_celestial = 3.5 / 60.0; /* deg */
-
-    /* 2. Gauss-Newton optimization loop */
-    int max_iters = 10;
-    int converged = 0;
-
-    for (iter = 0; iter < max_iters; iter++) {
-        /* reset Jacobian and residuals */
-        memset(J, 0, (size_t)M * (size_t)N * sizeof(double));
-
-        int r_idx = 0;
-
-        /* 2.1 prior factors */
-        r[r_idx] = X[0] - initial_lat;
-        W[r_idx] = 1.0 / sigma_prior_pos;
-        J[r_idx * N + 0] = 1.0;
-        r_idx++;
-
-        r[r_idx] = X[1] - initial_lon;
-        W[r_idx] = 1.0 / sigma_prior_pos;
-        J[r_idx * N + 1] = 1.0;
-        r_idx++;
-
-        r[r_idx] = X[N - 2] - 1.0;
-        W[r_idx] = 1.0 / sigma_prior_scale;
-        J[r_idx * N + (N - 2)] = 1.0;
-        r_idx++;
-
-        r[r_idx] = X[N - 1] - 0.0;
-        W[r_idx] = 1.0 / sigma_prior_bias;
-        J[r_idx * N + (N - 1)] = 1.0;
-        r_idx++;
-
-        /* 2.2 odometry factors */
-        double s_val = X[N - 2];
-        double b_val = X[N - 1];
-
-        if (s_val < 1e-6) s_val = 1e-6;
-
-        for (i = 1; i <= num_nodes; i++) {
-            double lat_prev = X[2 * (i - 1)];
-            double lon_prev = X[2 * (i - 1) + 1];
-            double lat_curr = X[2 * i];
-            double lon_curr = X[2 * i + 1];
-
-            double sum_cos = 0.0;
-            double sum_sin = 0.0;
-            int start_step = (i - 1) * steps_per_node;
-
-            for (j = 0; j < steps_per_node; j++) {
-                int s_idx = start_step + j;
-                double h_rad = deg_to_rad(odom[s_idx].heading) - b_val;
-                double dist_nm = odom[s_idx].speed * dt_sec / 3600.0;
-                sum_cos += dist_nm * cos(h_rad);
-                sum_sin += dist_nm * sin(h_rad);
-            }
-
-            double lat_mid_rad = deg_to_rad((lat_prev + lat_curr) / 2.0);
-            double cos_lat_mid = cos(lat_mid_rad);
-            if (fabs(cos_lat_mid) < 1e-6) cos_lat_mid = 1e-6;
-
-            /* Match the EKF convention: scale = measured speed / true speed. */
-            double exp_d_lat = sum_cos / (60.0 * s_val);
-            double exp_d_lon = sum_sin / (60.0 * cos_lat_mid * s_val);
-
-            /* lat odometry residual */
-            r[r_idx] = lat_curr - lat_prev - exp_d_lat;
-            W[r_idx] = 1.0 / sigma_odom_lat;
-            J[r_idx * N + 2 * (i - 1)] = -1.0;
-            J[r_idx * N + 2 * i] = 1.0;
-            J[r_idx * N + (N - 2)] = exp_d_lat / s_val;
-            J[r_idx * N + (N - 1)] = -sum_sin / (60.0 * s_val);
-            r_idx++;
-
-            /* lon odometry residual */
-            r[r_idx] = lon_curr - lon_prev - exp_d_lon;
-            W[r_idx] = 1.0 / sigma_odom_lon;
-            J[r_idx * N + 2 * (i - 1)] = -exp_d_lon * tan(lat_mid_rad) * 0.5 * (M_PI / 180.0);
-            J[r_idx * N + 2 * i] = -exp_d_lon * tan(lat_mid_rad) * 0.5 * (M_PI / 180.0);
-            J[r_idx * N + 2 * (i - 1) + 1] = -1.0;
-            J[r_idx * N + 2 * i + 1] = 1.0;
-            J[r_idx * N + (N - 2)] = exp_d_lon / s_val;
-            J[r_idx * N + (N - 1)] = sum_cos / (60.0 * cos_lat_mid * s_val);
-            r_idx++;
-        }
-
-        /* 2.3 celestial fix factors */
-        for (i = 0; i < num_fixes; i++) {
-            int n_idx = fixes[i].node_idx;
-
-            r[r_idx] = X[2 * n_idx] - fixes[i].lat;
-            W[r_idx] = 1.0 / sigma_celestial;
-            J[r_idx * N + 2 * n_idx] = 1.0;
-            r_idx++;
-
-            r[r_idx] = X[2 * n_idx + 1] - fixes[i].lon;
-            W[r_idx] = 1.0 / sigma_celestial;
-            J[r_idx * N + 2 * n_idx + 1] = 1.0;
-            r_idx++;
-        }
-
-        /* 2.4 apply weights to Jacobian and residuals */
-        for (i = 0; i < M; i++) {
-            r[i] *= W[i];
-            b[i] = -r[i];
-            for (j = 0; j < N; j++) {
-                J[i * N + j] *= W[i];
-            }
-        }
-
-        /* 2.5 solve update step using nanoqsp sparse CSR solver */
-        for (i = 0; i < N; i++) {
-            delta_X[i] = 0.0;
-        }
-
-        /* Accumulate sparse J^T J triplets from the handful of nonzeros in each factor row. */
-        memset(d_vec, 0, (size_t)N * sizeof(double));
-        ptrdiff_t term_count = 0;
-        for (k = 0; k < M; k++) {
-            int nz_cols[8];
-            double nz_vals[8];
-            int nz_count = 0;
-            for (i = 0; i < N; i++) {
-                double ji = J[k * N + i];
-                if (fabs(ji) > 0.0) {
-                    if (nz_count >= 8) return STARFIX_ERR_DATA_CORRUPTION;
-                    nz_cols[nz_count] = i;
-                    nz_vals[nz_count] = ji;
-                    nz_count++;
-                    d_vec[i] += ji * b[k];
-                }
-            }
-            for (i = 0; i < nz_count; i++) {
-                int row = nz_cols[i];
-                for (j = 0; j < nz_count; j++) {
-                    int col = nz_cols[j];
-                    if (term_count >= max_normal_terms) return STARFIX_ERR_MEMORY;
-                    normal_terms[term_count].row = row;
-                    normal_terms[term_count].col = col;
-                    normal_terms[term_count].value = nz_vals[i] * nz_vals[j];
-                    term_count++;
-                }
-            }
-        }
-
-        qsort(normal_terms, (size_t)term_count, sizeof(normal_term_t), compare_normal_terms);
-
-        /* Merge duplicate triplets directly into CSR and calculate the infinity norm. */
-        double norm_inf = 0.0;
-        ptrdiff_t term_idx = 0;
-        int nnz = 0;
-        for (i = 0; i < N; i++) {
-            row_ptr[i] = nnz;
-            double row_sum = 0.0;
-            while (term_idx < term_count && normal_terms[term_idx].row == i) {
-                int col = normal_terms[term_idx].col;
-                double sum = 0.0;
-                do {
-                    sum += normal_terms[term_idx].value;
-                    term_idx++;
-                } while (term_idx < term_count && normal_terms[term_idx].row == i &&
-                         normal_terms[term_idx].col == col);
-                if (fabs(sum) > 1e-15) {
-                    val[nnz] = sum;
-                    col_ind[nnz] = col;
-                    row_sum += fabs(sum);
-                    nnz++;
-                }
-            }
-            if (row_sum > norm_inf) norm_inf = row_sum;
-        }
-        row_ptr[N] = nnz;
-
-        /* Tikhonov regularization; every state has a positive diagonal term. */
-        double epsilon = 1e-8;
-        if (norm_inf > 1e-12) epsilon = norm_inf * 1e-8;
-        for (i = 0; i < N; i++) {
-            int diagonal_found = 0;
-            for (j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
-                if (col_ind[j] == i) {
-                    val[j] += epsilon;
-                    diagonal_found = 1;
-                    break;
-                }
-            }
-            if (!diagonal_found) return STARFIX_ERR_SOLVER_SINGULAR;
-        }
-
-        NanoqspCSR D_sparse;
-        D_sparse.n = N;
-        D_sparse.nnz = nnz;
-        D_sparse.values = val;
-        D_sparse.col_indices = col_ind;
-        D_sparse.row_ptr = row_ptr;
-
-        NanoqspConfig config = {.strategy = NANOQSP_STRATEGY_COORDINATE_DESCENT,
-                                .max_iterations = 1000,
-                                .tolerance = 1e-6,
-                                .workspace = nanoqsp_ws,
-                                .workspace_size = nanoqsp_ws_size};
-        config.strategy = NANOQSP_STRATEGY_SPECTRAL_GRADIENT;
-        config.max_iterations = 2000;
-        config.tolerance = 1e-9;
-
-        int result = nanoqsp_solve_box_sparse(N, &D_sparse, d_vec, lb, ub, delta_X, &config);
-
-        if (result < 0 && result != NANOQSP_ERR_MAX_ITERATIONS) {
-            /* solver failed */
+        memset(delta, 0, (size_t)n * sizeof(*delta));
+        int status = nanoqsp_solve_box_sparse(n, &matrix, rhs, lower, upper, delta, &config);
+        if (status < 0 && status != NANOQSP_ERR_MAX_ITERATIONS)
             return STARFIX_ERR_SOLVER_DIVERGENCE;
+        double step = 0.0;
+        for (int i = 0; i < n; i++) {
+            x[i] += delta[i];
+            step += delta[i] * delta[i];
         }
-
-        /* 2.6 update state vector */
-        double step_norm = 0.0;
-        for (i = 0; i < N; i++) {
-            X[i] += delta_X[i];
-            step_norm += delta_X[i] * delta_X[i];
-        }
-        step_norm = sqrt(step_norm);
-
-        if (step_norm < 1e-5) {
-            converged = 1;
-            break;
-        }
+        iterations++;
+        if (sqrt(step) < 1e-5) break;
     }
 
-    /* 3. copy optimized states back to output arrays */
-    for (i = 0; i <= num_nodes; i++) {
-        poses[i].lat = X[2 * i];
-        poses[i].lon = X[2 * i + 1];
-    }
-    *est_scale = X[N - 2];
-    *est_bias = X[N - 1];
-
-    if (telem) {
-        telem->solver_iterations = (uint32_t)(converged ? (iter + 1) : max_iters);
-    }
+    for (int i = 0; i <= num_nodes; i++) poses[i] = (starfix_pose_t){x[2 * i], x[2 * i + 1]};
+    *est_scale = x[n - 2];
+    *est_bias = x[n - 1];
+    if (telem) telem->solver_iterations = (uint32_t)iterations;
     return STARFIX_SUCCESS;
 }

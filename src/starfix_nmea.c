@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* helper to calculate NMEA XOR checksum */
 static void append_checksum(char* sentence, size_t max_len) {
     uint8_t checksum = 0;
     int i = 1; /* skip the starting '$' */
@@ -17,7 +16,6 @@ static void append_checksum(char* sentence, size_t max_len) {
     if (sentence[i] == '*') {
         snprintf(&sentence[i + 1], max_len - (size_t)i - 1, "%02X\r\n", checksum);
     } else {
-        /* If no '*' found, append it */
         snprintf(&sentence[i], max_len - (size_t)i, "*%02X\r\n", checksum);
     }
 }

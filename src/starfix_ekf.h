@@ -3,10 +3,6 @@
 #ifndef STARFIX_EKF_H
 #define STARFIX_EKF_H
 
-/* starfix_ekf: lightweight c implementation of extended kalman filter
-   for sailboat/vehicle gps-denied navigation. fuses dead reckoning
-   (speed log and compass) with celestial navigation updates. */
-
 typedef struct {
     double lat;     /* latitude in degrees */
     double lon;     /* longitude in degrees */

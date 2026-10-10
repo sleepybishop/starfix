@@ -11,14 +11,8 @@
 extern "C" {
 #endif
 
-/* Formats latitude, longitude, and time into NMEA 0183 standard sentences.
-   The resulting string will contain both $GPGGA and $GPRMC sentences separated by \r\n.
-   - lat_deg: solved latitude in degrees (positive for North)
-   - lon_deg: solved longitude in degrees (positive for East)
-   - time_utc: Unix timestamp of the observation
-   - out_buffer: allocated character buffer to receive the NMEA string
-   - out_size: size of the output buffer (recommend at least 256 bytes)
-   - returns: 0 on success, negative on error. */
+/* format degree lat/lon (north/east positive) and unix UTC time as GPGGA/GPRMC with CRLF.
+ * out_size is in bytes (256 recommended); returns zero or a negative error */
 int starfix_format_nmea(double lat_deg, double lon_deg, time_t time_utc, char* out_buffer,
                         size_t out_size);
 

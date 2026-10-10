@@ -5,53 +5,28 @@
 #include "starfix_solver.h"
 #include "starfix_status.h"
 
-/* starfix_attitude: C API for attitude determination. solves Wahba's problem
-   using Davenport's Q-method (eigenvalue decomposition of 4x4 matrix K)
-   to calculate the optimal attitude quaternion and 3x3 rotation matrix. */
-
 typedef struct {
     double q[4]; /* quaternion: [q0, q1, q2, q3] where q0 is scalar */
 } starfix_quaternion_t;
 
-/* solves Wahba's problem to find optimal orientation:
-   - num_stars: number of paired star vectors (must be >= 2)
-   - w: right-handed camera unit vectors (+X image right, +Y image down, +Z forward)
-   - v: celestial catalog frame unit vectors
-   - q_est: output optimal quaternion
-   - R_est: output optimal 3x3 rotation matrix (projects catalog to camera)
-   - returns: 0 on success, negative value on error */
+/* fit >= 2 paired unit vectors using davenport's Q-method; R_est maps catalog v to camera w.
+ * camera axes: +X right, +Y down, +Z forward; returns zero or a negative error */
 starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
                                         const starfix_vector3_t* v, starfix_quaternion_t* q_est,
                                         double R_est[3][3]);
 
-/* solves Wahba's problem using RANSAC to reject outliers:
-   - num_stars: number of paired star vectors
-   - w: camera frame unit vectors
-   - v: celestial catalog frame unit vectors
-   - threshold_deg: maximum angular error for an inlier (in degrees)
-   - q_est: output optimal quaternion
-   - R_est: output optimal 3x3 rotation matrix
-   - returns: STARFIX_SUCCESS or a negative error; inlier counts are written to telem */
+/* RANSAC attitude fit with threshold_deg angular tolerance; vectors and outputs as above.
+ * returns zero or a negative error; optional telemetry reports inliers and iterations */
 starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
                                                const starfix_vector3_t* v, double threshold_deg,
                                                starfix_quaternion_t* q_est, double R_est[3][3],
                                                starfix_arena_t* arena, starfix_telemetry_t* telem);
 
-/* applies atmospheric refraction correction to a set of observed camera vectors:
-   - num_stars: number of stars
-   - w: apparent camera vectors (modified in-place to true vectors)
-   - z_cam: measured gravity Zenith vector in camera frame
-   - temp_c: air temperature in Celsius
-   - press_hpa: barometric pressure in hPa
-   - returns: 0 on success, negative value on error */
+/* unrefract w in place; z_cam is zenith, temp_c celsius, press_hpa hPa */
 int starfix_correct_refraction(int num_stars, starfix_vector3_t* w, const starfix_vector3_t* z_cam,
                                double temp_c, double press_hpa);
 
-/* applies stellar aberration correction to a set of catalog vectors:
-   - num_stars: number of stars
-   - v: celestial catalog unit vectors (modified in-place)
-   - v_obs_km_s: observer velocity in km/s (ICRS frame)
-   - returns: 0 on success, negative value on error */
+/* apply aberration to catalog unit vectors in place using ICRS observer velocity in km/s */
 int starfix_correct_aberration(int num_stars, starfix_vector3_t* v, const double v_obs_km_s[3]);
 
 #endif /* STARFIX_ATTITUDE_H */
