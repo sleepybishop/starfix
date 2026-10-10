@@ -34,7 +34,7 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
         double y = (centroids[ci].v - options->height / 2.0) / focal;
         norm = hypot(hypot(x, y), 1.0);
         camera[i] = (starfix_vector3_t){x / norm, y / norm, 1.0 / norm};
-        double ra = starfix_catalog_ra(&catalog[si]), dec = starfix_catalog_dec(&catalog[si]);
+        double ra = catalog[si].ra, dec = catalog[si].dec;
         if (!isfinite(ra) || !isfinite(dec)) return STARFIX_ERR_DATA_CORRUPTION;
         celestial[i] = (starfix_vector3_t){cos(dec) * cos(ra), cos(dec) * sin(ra), sin(dec)};
     }

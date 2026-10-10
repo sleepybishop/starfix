@@ -20,24 +20,6 @@ typedef struct {
     double dec0; /* Base J2000 Dec in radians */
 } starfix_catalog_star_t;
 
-static inline double starfix_catalog_ra(const starfix_catalog_star_t* star) { return star->ra; }
-
-static inline double starfix_catalog_dec(const starfix_catalog_star_t* star) { return star->dec; }
-
-static inline double starfix_catalog_mag(const starfix_catalog_star_t* star) { return star->mag; }
-
-static inline void starfix_catalog_set_ra(starfix_catalog_star_t* star, double ra) {
-    star->ra = ra;
-}
-
-static inline void starfix_catalog_set_dec(starfix_catalog_star_t* star, double dec) {
-    star->dec = dec;
-}
-
-static inline void starfix_catalog_set_mag(starfix_catalog_star_t* star, double mag) {
-    star->mag = mag;
-}
-
 typedef struct {
     uint32_t hash_key;
     uint16_t stars[4];

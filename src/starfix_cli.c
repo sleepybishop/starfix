@@ -11,19 +11,31 @@
 #include "starfix_identify.h"
 #include "starfix_photo.h"
 
-/* 10 MB statically allocated memory pool for the entire pipeline */
 static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena;
 
-#define RESET_ARENA()                          \
-    do {                                       \
-        arena.beg = mempool;                   \
-        arena.end = mempool + sizeof(mempool); \
-    } while (0)
+typedef struct {
+    starfix_catalog_star_t* stars;
+    starfix_hash_entry_t* hashes;
+    uint32_t num_stars, num_hashes, bins;
+} catalog_t;
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+static double current_year(void) {
+    time_t now = time(NULL);
+    struct tm* utc = gmtime(&now);
+    return utc ? 1900.0 + utc->tm_year + utc->tm_yday / 365.25 : NAN;
+}
+
+static int load_catalog(catalog_t* db, double year) {
+    if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
+    if (starfix_load_db("data/starfix_db.bin", &db->stars, &db->num_stars, &db->hashes,
+                        &db->num_hashes, &db->bins) != 0 &&
+        starfix_load_db("../data/starfix_db.bin", &db->stars, &db->num_stars, &db->hashes,
+                        &db->num_hashes, &db->bins) != 0) {
+        fprintf(stderr, "Could not load data/starfix_db.bin or ../data/starfix_db.bin.\n");
+        return STARFIX_ERR_DATA_CORRUPTION;
+    }
+    return starfix_propagate_astrometry(db->stars, db->num_stars, year, NULL);
+}
 
 static int do_centroid(int threshold) {
     printf("Loading image from data/mock_image.pgm...\n");
@@ -52,47 +64,30 @@ static int do_centroid(int threshold) {
 }
 
 static int do_identify(int width, int height, double fov_deg, double observation_year) {
-    starfix_catalog_star_t* catalog = NULL;
-    starfix_hash_entry_t* hash_table = NULL;
-    uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
-
-    printf("Loading database from data/starfix_db.bin...\n");
-    if (starfix_load_db("data/starfix_db.bin", &catalog, &num_stars, &hash_table, &num_entries,
-                        &bin_factor) != 0) {
-        if (starfix_load_db("../data/starfix_db.bin", &catalog, &num_stars, &hash_table,
-                            &num_entries, &bin_factor) != 0) {
-            printf("Error loading binary database.\n");
-            return -1;
-        }
-    }
-
-    printf("Propagating catalog precession to year %.2f...\n", observation_year);
-    starfix_propagate_astrometry(catalog, num_stars, observation_year, NULL);
+    catalog_t db = {0};
+    int result = -1;
+    if (load_catalog(&db, observation_year) != 0) goto done;
 
     starfix_centroid_t centroids[1000];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 1000);
     if (cent_count <= 0) {
         printf("Error loading detected centroids.\n");
-        free(catalog);
-        free(hash_table);
-        return -1;
+        goto done;
     }
 
     printf("Using top %d brightest centroids for pattern matching...\n",
-           (cent_count < 8) ? cent_count : 8);
+           (cent_count < 12) ? cent_count : 12);
     starfix_match_t matches[20];
     starfix_telemetry_t telem = {0};
-    RESET_ARENA();
+    starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
     starfix_status_t match_status = starfix_identify_stars(
-        cent_count, centroids, width, height, fov_deg, num_stars, catalog, num_entries, hash_table,
-        bin_factor, 20, matches, &arena, &telem, NULL);
+        cent_count, centroids, width, height, fov_deg, db.num_stars, db.stars, db.num_hashes,
+        db.hashes, db.bins, 20, matches, &arena, &telem, NULL);
     int match_count = (int)telem.identify_matches;
 
     if (match_status != STARFIX_SUCCESS) {
         printf("Identification failed with code %d\n", (int)match_status);
-        free(catalog);
-        free(hash_table);
-        return -1;
+        goto done;
     }
 
     printf("Identified Stars:\n");
@@ -102,40 +97,24 @@ static int do_identify(int width, int height, double fov_deg, double observation
     for (i = 0; i < match_count; i++) {
         int c_idx = matches[i].centroid_idx;
         int cat_idx = matches[i].catalog_idx;
-        printf("%-15d | %-10d | %10.4f | %10.4f\n", c_idx, catalog[cat_idx].hip,
-               starfix_catalog_ra(&catalog[cat_idx]) * 180.0 / M_PI,
-               starfix_catalog_dec(&catalog[cat_idx]) * 180.0 / M_PI);
+        printf("%-15d | %-10d | %10.4f | %10.4f\n", c_idx, db.stars[cat_idx].hip,
+               db.stars[cat_idx].ra * 180.0 / M_PI, db.stars[cat_idx].dec * 180.0 / M_PI);
     }
 
-    write_identified_json("data/identified_stars.json", matches, match_count, catalog);
+    write_identified_json("data/identified_stars.json", matches, match_count, db.stars);
     printf("Saved %d identified stars to data/identified_stars.json\n", match_count);
 
-    free(catalog);
-    free(hash_table);
-    return 0;
+    result = 0;
+done:
+    free(db.stars);
+    free(db.hashes);
+    return result;
 }
 
-static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, double fov_deg,
-                          double observation_year, int attitude_only, double crop_size) {
-    if (!isfinite(observation_year)) return 1;
-    starfix_catalog_star_t* catalog = NULL;
-    starfix_hash_entry_t* hash_table = NULL;
-    uint32_t num_stars = 0, num_entries = 0, bin_factor = 0;
-
-    if (starfix_load_db("data/starfix_db.bin", &catalog, &num_stars, &hash_table, &num_entries,
-                        &bin_factor) != 0) {
-        if (starfix_load_db("../data/starfix_db.bin", &catalog, &num_stars, &hash_table,
-                            &num_entries, &bin_factor) != 0) {
-            printf("Failed to load db (tried data/starfix_db.bin and ../data/starfix_db.bin).\n");
-            return 1;
-        }
-    }
-    if (starfix_propagate_astrometry(catalog, num_stars, observation_year, NULL) != 0) {
-        printf("Failed to propagate catalog astrometry.\n");
-        free(catalog);
-        free(hash_table);
-        return 1;
-    }
+static int do_solve_photo(const starfix_photo_options_t* options, double year, int attitude_only) {
+    catalog_t db = {0};
+    int result = 1;
+    if (load_catalog(&db, year) != 0) goto done;
 
     starfix_centroid_t centroids[1000];
     int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 1000);
@@ -144,9 +123,7 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
     }
     if (cent_count <= 0) {
         printf("Error: Could not load centroids from data/detected_centroids.json\n");
-        free(catalog);
-        free(hash_table);
-        return 1;
+        goto done;
     }
 
     starfix_match_t matches[1000];
@@ -158,37 +135,23 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
         printf(
             "Error: Need at least 3 identified stars in data/identified_stars.json (found: %d)\n",
             match_count);
-        free(catalog);
-        free(hash_table);
-        return 1;
+        goto done;
     }
 
-    starfix_photo_options_t options = {
-        .width = crop_size,
-        .height = crop_size,
-        .fov_deg = fov_deg,
-        .gha_aries = gha_aries,
-        .zenith_camera = {g_x, g_y, g_z},
-    };
-    starfix_photo_result_t result;
-    RESET_ARENA();
-    starfix_status_t status = starfix_solve_photo(cent_count, centroids, num_stars, catalog,
-                                                  match_count, matches, &options, &result, &arena);
-    free(catalog);
-    free(hash_table);
+    starfix_photo_result_t fitted;
+    starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
+    starfix_status_t status = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
+                                                  match_count, matches, options, &fitted, &arena);
     if (status != STARFIX_SUCCESS) {
         fprintf(stderr, "Photo solution failed quality or input checks (status %d)\n", status);
-        return 1;
+        goto done;
     }
-    const double (*R)[3] = (const double (*)[3])result.rotation;
-    printf("RMS_ERROR: %.9f pixels\n", result.rms_pixels);
-    printf("INLIERS: %u/%d\n", result.inliers, result.matches);
+    const double (*R)[3] = (const double (*)[3])fitted.rotation;
+    printf("RMS_ERROR: %.9f pixels\n", fitted.rms_pixels);
+    printf("INLIERS: %u/%d\n", fitted.inliers, fitted.matches);
 
-    /* Convert R to Euler Angles */
-    double R_flat[9] = {R[0][0], R[0][1], R[0][2], R[1][0], R[1][1],
-                        R[1][2], R[2][0], R[2][1], R[2][2]};
     double ra_deg, dec_deg, roll_deg;
-    starfix_rotation_to_euler(R_flat, &ra_deg, &dec_deg, &roll_deg);
+    starfix_rotation_to_euler(R, &ra_deg, &dec_deg, &roll_deg);
 
     printf("\nEstimated Attitude:\n");
     printf("  Right Ascension : %.4f degrees\n", ra_deg);
@@ -199,10 +162,14 @@ static int do_solve_photo(double gha_aries, double g_x, double g_y, double g_z, 
 
     if (!attitude_only) {
         printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
-        printf("  Solved Latitude  : %f degrees North\n", result.latitude);
-        printf("  Solved Longitude : %f degrees East\n", result.longitude);
+        printf("  Solved Latitude  : %f degrees North\n", fitted.latitude);
+        printf("  Solved Longitude : %f degrees East\n", fitted.longitude);
     }
-    return 0;
+    result = 0;
+done:
+    free(db.stars);
+    free(db.hashes);
+    return result;
 }
 
 int main(int argc, char** argv) {
@@ -228,61 +195,26 @@ int main(int argc, char** argv) {
         int w = (argc >= 3) ? atoi(argv[2]) : 1024;
         int h = (argc >= 4) ? atoi(argv[3]) : 1024;
         double fov = (argc >= 5) ? atof(argv[4]) : 12.0;
-        double observation_year;
-        if (argc >= 6) {
-            observation_year = atof(argv[5]);
-        } else {
-            time_t now = time(NULL);
-            struct tm* now_utc = gmtime(&now);
-            if (now_utc == NULL) return 1;
-            observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
-        }
+        double observation_year = argc >= 6 ? atof(argv[5]) : current_year();
         return do_identify(w, h, fov, observation_year);
-    } else if (strcmp(argv[1], "--solve-photo") == 0) {
-        if (argc < 6 || argc > 9) {
-            printf(
-                "Usage: %s --solve-photo <gha_aries> <g_x> <g_y> <g_z> "
-                "[fov_deg] [observation_year] [crop_size]\n",
-                argv[0]);
+    } else if (strcmp(argv[1], "--solve-photo") == 0 || strcmp(argv[1], "--fit-photo") == 0) {
+        int attitude_only = strcmp(argv[1], "--fit-photo") == 0;
+        int first = attitude_only ? 2 : 3;
+        if (argc < first + 3 || argc > first + 6) {
+            printf("Usage: %s %s %s<g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size]\n",
+                   argv[0], argv[1], attitude_only ? "" : "<gha_aries> ");
             return 1;
         }
-        double gha = atof(argv[2]);
-        double gx = atof(argv[3]);
-        double gy = atof(argv[4]);
-        double gz = atof(argv[5]);
-        double fov_deg = (argc >= 7) ? atof(argv[6]) : 11.28;
-        double observation_year;
-        if (argc >= 8) {
-            observation_year = atof(argv[7]);
-        } else {
-            time_t now = time(NULL);
-            struct tm* now_utc = gmtime(&now);
-            if (now_utc == NULL) return 1;
-            observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
-        }
-        double crop_size = (argc >= 9) ? atof(argv[8]) : 560.0;
-        return do_solve_photo(gha, gx, gy, gz, fov_deg, observation_year, 0, crop_size);
-    } else if (strcmp(argv[1], "--fit-photo") == 0) {
-        if (argc < 5) {
-            printf(
-                "Usage: %s --fit-photo <g_x> <g_y> <g_z> [fov_deg] [observation_year] "
-                "[crop_size]\n",
-                argv[0]);
-            return 1;
-        }
-        double gx = atof(argv[2]), gy = atof(argv[3]), gz = atof(argv[4]);
-        double fov_deg = (argc >= 6) ? atof(argv[5]) : 11.28;
-        double observation_year;
-        if (argc >= 7) {
-            observation_year = atof(argv[6]);
-        } else {
-            time_t now = time(NULL);
-            struct tm* now_utc = gmtime(&now);
-            if (now_utc == NULL) return 1;
-            observation_year = 1900.0 + now_utc->tm_year + now_utc->tm_yday / 365.25;
-        }
-        double crop_size = (argc >= 8) ? atof(argv[7]) : 560.0;
-        return do_solve_photo(0.0, gx, gy, gz, fov_deg, observation_year, 1, crop_size);
+        double year = argc > first + 4 ? atof(argv[first + 4]) : current_year();
+        double size = argc > first + 5 ? atof(argv[first + 5]) : 560.0;
+        starfix_photo_options_t options = {
+            .width = size,
+            .height = size,
+            .fov_deg = argc > first + 3 ? atof(argv[first + 3]) : 11.28,
+            .gha_aries = attitude_only ? 0.0 : atof(argv[2]),
+            .zenith_camera = {atof(argv[first]), atof(argv[first + 1]), atof(argv[first + 2])},
+        };
+        return do_solve_photo(&options, year, attitude_only);
     } else {
         printf("Invalid option: %s\n", argv[1]);
         return 1;

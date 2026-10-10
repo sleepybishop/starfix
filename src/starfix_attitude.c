@@ -262,10 +262,9 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
 
         if (current_inlier_count > best_inlier_count) {
             best_inlier_count = current_inlier_count;
-            int k_in;
-            for (k_in = 0; k_in < best_inlier_count; k_in++) {
-                best_inliers[k_in] = current_inliers[k_in];
-            }
+            int* swap = best_inliers;
+            best_inliers = current_inliers;
+            current_inliers = swap;
         }
     }
 
@@ -273,43 +272,25 @@ starfix_status_t starfix_solve_attitude_ransac(int num_stars, const starfix_vect
         telem->ransac_iterations = (uint32_t)max_iterations;
     }
 
-    /* refit using all inliers in the best set */
+    /* refit the winning set; fall back to all observations if no pair survived */
+    int count = num_stars;
     if (best_inlier_count >= 2) {
         starfix_vector3_t* w_inliers =
-            starfix_alloc_array(arena, starfix_vector3_t, (size_t)best_inlier_count);
+            starfix_alloc_array(arena, starfix_vector3_t, best_inlier_count);
         starfix_vector3_t* v_inliers =
-            starfix_alloc_array(arena, starfix_vector3_t, (size_t)best_inlier_count);
-
-        if (w_inliers == NULL || v_inliers == NULL) {
-            return STARFIX_ERR_MEMORY;
+            starfix_alloc_array(arena, starfix_vector3_t, best_inlier_count);
+        if (!w_inliers || !v_inliers) return STARFIX_ERR_MEMORY;
+        for (int i = 0; i < best_inlier_count; i++) {
+            w_inliers[i] = w[best_inliers[i]];
+            v_inliers[i] = v[best_inliers[i]];
         }
-        int i;
-        for (i = 0; i < best_inlier_count; i++) {
-            int idx = best_inliers[i];
-            w_inliers[i] = w[idx];
-            v_inliers[i] = v[idx];
-        }
-        int status = starfix_solve_attitude(best_inlier_count, w_inliers, v_inliers, q_est, R_est);
-        if (status < 0) {
-            return status;
-        }
-    } else {
-        /* fallback to standard least-squares if RANSAC failed to find inliers */
-        int res = starfix_solve_attitude(num_stars, w, v, q_est, R_est);
-        if (res < 0) {
-            return res;
-        }
-        if (telem) {
-            telem->ransac_inliers = (uint32_t)num_stars;
-            telem->ransac_inlier_ratio = 1.0;
-        }
-        return STARFIX_SUCCESS;
+        w = w_inliers;
+        v = v_inliers;
+        count = best_inlier_count;
     }
-
-    if (telem) {
-        telem->ransac_inliers = (uint32_t)best_inlier_count;
-        telem->ransac_inlier_ratio = (double)best_inlier_count / num_stars;
-    }
+    int status = starfix_solve_attitude(count, w, v, q_est, R_est);
+    if (status < 0) return status;
+    if (telem) telem->ransac_inliers = (uint32_t)count;
     return STARFIX_SUCCESS;
 }
 

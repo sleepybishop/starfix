@@ -3,7 +3,7 @@
 
 #include "starfix_identify.h"
 
-void starfix_rotation_to_euler(const double R[9], double* ra_deg, double* dec_deg,
+void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec_deg,
                                double* roll_deg);
 unsigned char* read_pgm(const char* path, int* width, int* height);
 int write_centroids_json(const char* path, const starfix_centroid_t* centroids, int count);

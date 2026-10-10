@@ -437,8 +437,8 @@ int starfix_propagate_astrometry(starfix_catalog_star_t* catalog, uint32_t num_s
         starfix_nutation(mjd, &ra, &dec);
         starfix_aberration(mjd, &ra, &dec);
 
-        starfix_catalog_set_ra(&catalog[i], ra);
-        starfix_catalog_set_dec(&catalog[i], dec);
+        catalog[i].ra = ra;
+        catalog[i].dec = dec;
     }
 
     if (cached_year) {

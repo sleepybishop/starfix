@@ -234,8 +234,8 @@ int main() {
             w_vecs[i].y = cy / norm;
             w_vecs[i].z = 1.0 / norm;
 
-            double dec_s = starfix_catalog_dec(&catalog[cat_i]);
-            double ra_s = starfix_catalog_ra(&catalog[cat_i]);
+            double dec_s = catalog[cat_i].dec;
+            double ra_s = catalog[cat_i].ra;
             v_vecs[i].x = cos(dec_s) * cos(ra_s);
             v_vecs[i].y = cos(dec_s) * sin(ra_s);
             v_vecs[i].z = sin(dec_s);
@@ -280,9 +280,9 @@ int main() {
     dummy_cat[0].hip = 12345;
     dummy_cat[0].ra0 = 0.0;
     dummy_cat[0].dec0 = 0.0;
-    starfix_catalog_set_ra(&dummy_cat[0], 0.0);
-    starfix_catalog_set_dec(&dummy_cat[0], 0.0);
-    starfix_catalog_set_mag(&dummy_cat[0], 2.0);
+    dummy_cat[0].ra = 0.0;
+    dummy_cat[0].dec = 0.0;
+    dummy_cat[0].mag = 2.0;
 
     int prec_status = starfix_propagate_astrometry(dummy_cat, 1, 2100.0, NULL);
 
@@ -291,13 +291,12 @@ int main() {
     double expected_d_dec = 0.009755;
     double expected_d_ra = 0.022339;
 
-    if (prec_status == 0 && fabs(starfix_catalog_dec(&dummy_cat[0]) - expected_d_dec) < 1e-4 &&
-        fabs(starfix_catalog_ra(&dummy_cat[0]) - expected_d_ra) < 1e-4) {
+    if (prec_status == 0 && fabs(dummy_cat[0].dec - expected_d_dec) < 1e-4 &&
+        fabs(dummy_cat[0].ra - expected_d_ra) < 1e-4) {
         printf("Passed\n");
     } else {
         printf("FAILED (status=%d, ra=%f (exp=%f), dec=%f (exp=%f))\n", prec_status,
-               starfix_catalog_ra(&dummy_cat[0]), expected_d_ra, starfix_catalog_dec(&dummy_cat[0]),
-               expected_d_dec);
+               dummy_cat[0].ra, expected_d_ra, dummy_cat[0].dec, expected_d_dec);
     }
 
     free(catalog);

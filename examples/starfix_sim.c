@@ -132,11 +132,8 @@ static int do_estimate_pose() {
     }
     const double (*R)[3] = (const double (*)[3])result.rotation;
 
-    /* extract pointing angles */
-    double R_flat[9] = {R[0][0], R[0][1], R[0][2], R[1][0], R[1][1],
-                        R[1][2], R[2][0], R[2][1], R[2][2]};
     double ra, dec, roll;
-    starfix_rotation_to_euler(R_flat, &ra, &dec, &roll);
+    starfix_rotation_to_euler(R, &ra, &dec, &roll);
 
     printf("\nAttitude Estimation Results:\n");
     printf("-------------------------------------------------------\n");

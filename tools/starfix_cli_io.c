@@ -5,11 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-void starfix_rotation_to_euler(const double R[9], double* ra_deg, double* dec_deg,
+void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec_deg,
                                double* roll_deg) {
-    double z_1 = R[6];
-    double z_2 = R[7];
-    double z_3 = R[8];
+    double z_1 = R[2][0];
+    double z_2 = R[2][1];
+    double z_3 = R[2][2];
 
     double dec_rad = asin(z_3 > 1.0 ? 1.0 : (z_3 < -1.0 ? -1.0 : z_3));
     double ra_rad = atan2(z_2, z_1);
@@ -18,7 +18,7 @@ void starfix_rotation_to_euler(const double R[9], double* ra_deg, double* dec_de
     double x_zero[3] = {-sin(ra_rad), cos(ra_rad), 0.0};
     double y_zero[3] = {-sin(dec_rad) * cos(ra_rad), -sin(dec_rad) * sin(ra_rad), cos(dec_rad)};
 
-    double x_cam[3] = {R[0], R[1], R[2]};
+    double x_cam[3] = {R[0][0], R[0][1], R[0][2]};
 
     double dot_y = x_cam[0] * y_zero[0] + x_cam[1] * y_zero[1] + x_cam[2] * y_zero[2];
     double dot_x = x_cam[0] * x_zero[0] + x_cam[1] * x_zero[1] + x_cam[2] * x_zero[2];
@@ -86,60 +86,63 @@ int write_centroids_json(const char* path, const starfix_centroid_t* centroids, 
     return 0;
 }
 
-int read_centroids_json(const char* path, starfix_centroid_t* centroids, int max_count) {
-    FILE* f = fopen(path, "r");
-    if (f == NULL) return -1;
-
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc((size_t)sz + 1);
-    if (buf == NULL) {
-        fclose(f);
-        return -2;
+static int read_text(const char* path, char** text) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    int status = -3;
+    char* buffer = NULL;
+    if (fseek(f, 0, SEEK_END) != 0) goto done;
+    long size = ftell(f);
+    if (size < 0 || (uintmax_t)size >= SIZE_MAX || fseek(f, 0, SEEK_SET) != 0) goto done;
+    buffer = malloc((size_t)size + 1);
+    if (!buffer) {
+        status = -2;
+        goto done;
     }
-    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
-        free(buf);
-        fclose(f);
-        return -3;
-    }
-    buf[sz] = '\0';
+    if (fread(buffer, 1, (size_t)size, f) != (size_t)size) goto done;
+    buffer[size] = '\0';
+    *text = buffer;
+    status = 0;
+done:
+    if (status < 0) free(buffer);
     fclose(f);
+    return status;
+}
 
+/* CLI records are flat numeric objects; terminate each one before looking up its fields */
+static char* next_object(char** cursor) {
+    char* start = strchr(*cursor, '{');
+    if (!start) return NULL;
+    char* end = strchr(start, '}');
+    if (!end) return NULL;
+    *end = '\0';
+    *cursor = end + 1;
+    return start;
+}
+
+static const char* json_value(const char* object, const char* key, const char* fallback) {
+    const char* value = strstr(object, key);
+    if (value) value = strchr(value, ':');
+    return value ? value + 1 : fallback;
+}
+
+int read_centroids_json(const char* path, starfix_centroid_t* centroids, int max_count) {
+    char* text;
+    int status = read_text(path, &text);
+    if (status < 0) return status;
     int count = 0;
-    char* obj_start = buf;
-    while (count < max_count) {
-        obj_start = strchr(obj_start, '{');
-        if (!obj_start) break;
-        char* obj_end = strchr(obj_start, '}');
-        if (!obj_end) break;
-
-        double u = -1.0, v = -1.0, flux = 0.0;
-        char* u_ptr = strstr(obj_start, "\"u\"");
-        if (u_ptr && u_ptr < obj_end) {
-            char* p = strchr(u_ptr, ':');
-            if (p) u = atof(p + 1);
-        }
-        char* v_ptr = strstr(obj_start, "\"v\"");
-        if (v_ptr && v_ptr < obj_end) {
-            char* p = strchr(v_ptr, ':');
-            if (p) v = atof(p + 1);
-        }
-        char* flux_ptr = strstr(obj_start, "\"flux\"");
-        if (flux_ptr && flux_ptr < obj_end) {
-            char* p = strchr(flux_ptr, ':');
-            if (p) flux = atof(p + 1);
-        }
-
-        if (u >= 0.0 && v >= 0.0) {
-            centroids[count].u = u;
-            centroids[count].v = v;
-            centroids[count].flux = flux;
-            count++;
-        }
-        obj_start = obj_end + 1;
+    char* cursor = text;
+    char* object;
+    while (count < max_count && (object = next_object(&cursor))) {
+        double u = atof(json_value(object, "\"u\"", "-1"));
+        double v = atof(json_value(object, "\"v\"", "-1"));
+        if (!(u >= 0.0 && v >= 0.0)) continue;
+        centroids[count].u = u;
+        centroids[count].v = v;
+        centroids[count].flux = atof(json_value(object, "\"flux\"", "0"));
+        count++;
     }
-    free(buf);
+    free(text);
     return count;
 }
 
@@ -156,9 +159,9 @@ int write_identified_json(const char* path, const starfix_match_t* matches, int 
         fprintf(f, "    \"centroid_idx\": %d,\n", matches[i].centroid_idx);
         fprintf(f, "    \"catalog_idx\": %d,\n", cat_idx);
         fprintf(f, "    \"hip\": %d,\n", catalog[cat_idx].hip);
-        fprintf(f, "    \"ra\": %.8f,\n", starfix_catalog_ra(&catalog[cat_idx]));
-        fprintf(f, "    \"dec\": %.8f,\n", starfix_catalog_dec(&catalog[cat_idx]));
-        fprintf(f, "    \"mag\": %.2f\n", starfix_catalog_mag(&catalog[cat_idx]));
+        fprintf(f, "    \"ra\": %.8f,\n", catalog[cat_idx].ra);
+        fprintf(f, "    \"dec\": %.8f,\n", catalog[cat_idx].dec);
+        fprintf(f, "    \"mag\": %.2f\n", catalog[cat_idx].mag);
         fprintf(f, "  }%s\n", (i == count - 1) ? "" : ",");
     }
     fprintf(f, "]\n");
@@ -167,52 +170,18 @@ int write_identified_json(const char* path, const starfix_match_t* matches, int 
 }
 
 int read_identified_json(const char* path, starfix_match_t* matches, int max_count) {
-    FILE* f = fopen(path, "r");
-    if (f == NULL) return -1;
-
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc((size_t)sz + 1);
-    if (buf == NULL) {
-        fclose(f);
-        return -2;
-    }
-    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
-        free(buf);
-        fclose(f);
-        return -3;
-    }
-    buf[sz] = '\0';
-    fclose(f);
-
+    char* text;
+    int status = read_text(path, &text);
+    if (status < 0) return status;
     int count = 0;
-    char* obj_start = buf;
-    while (count < max_count) {
-        obj_start = strchr(obj_start, '{');
-        if (!obj_start) break;
-        char* obj_end = strchr(obj_start, '}');
-        if (!obj_end) break;
-
-        int centroid_idx = -1, catalog_idx = -1;
-        char* c_ptr = strstr(obj_start, "\"centroid_idx\"");
-        if (c_ptr && c_ptr < obj_end) {
-            char* p = strchr(c_ptr, ':');
-            if (p) centroid_idx = atoi(p + 1);
-        }
-        char* cat_ptr = strstr(obj_start, "\"catalog_idx\"");
-        if (cat_ptr && cat_ptr < obj_end) {
-            char* p = strchr(cat_ptr, ':');
-            if (p) catalog_idx = atoi(p + 1);
-        }
-
-        if (centroid_idx >= 0 && catalog_idx >= 0) {
-            matches[count].centroid_idx = centroid_idx;
-            matches[count].catalog_idx = catalog_idx;
-            count++;
-        }
-        obj_start = obj_end + 1;
+    char* cursor = text;
+    char* object;
+    while (count < max_count && (object = next_object(&cursor))) {
+        int centroid = atoi(json_value(object, "\"centroid_idx\"", "-1"));
+        int catalog = atoi(json_value(object, "\"catalog_idx\"", "-1"));
+        if (centroid < 0 || catalog < 0) continue;
+        matches[count++] = (starfix_match_t){centroid, catalog};
     }
-    free(buf);
+    free(text);
     return count;
 }

@@ -132,8 +132,8 @@ int main(void) {
             cam_vecs[i].y = cy / norm;
             cam_vecs[i].z = 1.0 / norm;
 
-            double dec_s = starfix_catalog_dec(&catalog[cat_idx]);
-            double ra_s = starfix_catalog_ra(&catalog[cat_idx]);
+            double dec_s = catalog[cat_idx].dec;
+            double ra_s = catalog[cat_idx].ra;
             cat_vecs[i].x = cos(dec_s) * cos(ra_s);
             cat_vecs[i].y = cos(dec_s) * sin(ra_s);
             cat_vecs[i].z = sin(dec_s);

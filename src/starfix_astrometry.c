@@ -142,10 +142,9 @@ static short ampconst[NUT_SERIES][2] = {
     {-1, 0},   {1, 0}};
 
 /* compute nutation in obliquity (deps) and longitude (dpsi), in radians */
-void nutation(double mj, double* deps, double* dpsi) {
+static void nutation(double mj, double* deps, double* dpsi) {
     static double lastmj = -10000, lastdeps, lastdpsi;
     double T, T2, T3, T10; /* jul cent since J2000 */
-    double prec;           /* series precis in arc sec */
     int i, isecul;         /* index in term table */
     static double delcache[5][2 * NUT_MAXMUL + 1];
     /* delaunay multiples in radians, indexed by multiple + NUT_MAXMUL */
@@ -155,17 +154,6 @@ void nutation(double mj, double* deps, double* dpsi) {
         *dpsi = lastdpsi;
         return;
     }
-
-    prec = 0.0;
-
-#if 0 /* this is if deps should contain a precision value */
-	prec =* deps;
-	if (prec < 0.0 || prec > 1.0)	/* accept only sane value */
-		prec = 1.0;
-#endif
-
-    /* augment for abundance of small terms */
-    prec *= NUT_SCALE / 10;
 
     T = (mj - J2000) / 36525.;
     T2 = T * T;
@@ -207,9 +195,9 @@ void nutation(double mj, double* deps, double* dpsi) {
 
         for (j = 0; j < 5; ++j) arg += delcache[j][NUT_MAXMUL + multarg[i][j]];
 
-        if (fabs(ampsin) >= prec) lastdpsi += ampsin * sin(arg);
+        lastdpsi += ampsin * sin(arg);
 
-        if (fabs(ampcos) >= prec) lastdeps += ampcos * cos(arg);
+        lastdeps += ampcos * cos(arg);
     }
 
     lastdpsi = degrad(lastdpsi / 3600. / NUT_SCALE);
