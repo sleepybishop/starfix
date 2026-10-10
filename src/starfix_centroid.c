@@ -8,7 +8,6 @@
 
 #define MAX_BLOB_PIXELS 1000
 #define MAX_STAR_PIXELS 300
-#define MAX_BFS_ITERS 1500
 
 static int compare_centroids(const void* a, const void* b) {
     const starfix_centroid_t* ca = (const starfix_centroid_t*)a;
@@ -18,8 +17,19 @@ static int compare_centroids(const void* a, const void* b) {
     return 0;
 }
 
-static void sort_centroids(starfix_centroid_t* arr, int len) {
-    qsort(arr, (size_t)len, sizeof(starfix_centroid_t), compare_centroids);
+/* blend the center of mass with a parabolic fit around an interior peak */
+static void refine_centroid(const unsigned char* image, int width, int height, int x, int y,
+                            starfix_centroid_t* centroid) {
+    if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) return;
+    double center = image[y * width + x];
+    double left = image[y * width + x - 1], right = image[y * width + x + 1];
+    double top = image[(y - 1) * width + x], bottom = image[(y + 1) * width + x];
+    double dx = left - 2.0 * center + right, dy = top - 2.0 * center + bottom;
+    if (!(fabs(dx) > 1e-5 && fabs(dy) > 1e-5)) return;
+    double u = 0.5 * (left - right) / dx, v = 0.5 * (top - bottom) / dy;
+    if (fabs(u) > 0.5 || fabs(v) > 0.5) return;
+    centroid->u = 0.5 * centroid->u + 0.5 * ((double)x + u);
+    centroid->v = 0.5 * centroid->v + 0.5 * ((double)y + v);
 }
 
 starfix_status_t starfix_find_centroids(const unsigned char* image, int width, int height,
@@ -39,11 +49,9 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
     int x, y, dx, dy;
 
     uint32_t* visited = visited_mask;
-    int owns_visited = 0;
     if (visited == NULL) {
         visited = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
         if (visited == NULL) return STARFIX_ERR_MEMORY;
-        owns_visited = 1;
         frame_number = 1; /* first frame */
     } else if (frame_number == 0) {
         /* generation zero collides with a cleared mask; restart at one on wrap */
@@ -58,113 +66,69 @@ starfix_status_t starfix_find_centroids(const unsigned char* image, int width, i
         for (x = 0; x < width; x++) {
             int idx = y * width + x;
 
-            if (image[idx] > threshold && visited[idx] != frame_number) {
-                int head = 0;
-                int tail = 1;
+            if (image[idx] <= threshold || visited[idx] == frame_number) continue;
+            int head = 0;
+            int tail = 1;
 
-                queue_x[0] = x;
-                queue_y[0] = y;
-                visited[idx] = frame_number;
+            queue_x[0] = x;
+            queue_y[0] = y;
+            visited[idx] = frame_number;
 
-                double sum_intensity = 0.0;
-                double sum_u = 0.0;
-                double sum_v = 0.0;
-                double peak = 0.0;
-                int peak_x = x;
-                int peak_y = y;
+            double sum_intensity = 0.0;
+            double sum_u = 0.0;
+            double sum_v = 0.0;
+            double peak = 0.0;
+            int peak_x = x;
+            int peak_y = y;
 
-                int bfs_iters = 0;
-                while (head < tail && bfs_iters < MAX_BFS_ITERS) {
-                    bfs_iters++;
-                    int cx = queue_x[head];
-                    int cy = queue_y[head];
-                    head++;
+            while (head < tail) {
+                int cx = queue_x[head];
+                int cy = queue_y[head];
+                head++;
 
-                    double val = (double)image[cy * width + cx] - (double)threshold;
-                    if (val < 0.0) val = 0.0;
-                    sum_intensity += val;
-                    sum_u += val * cx;
-                    sum_v += val * cy;
-                    if (val > peak) {
-                        peak = val;
-                        peak_x = cx;
-                        peak_y = cy;
-                    }
-
-                    /* check 8-connected neighbors */
-                    for (dy = -1; dy <= 1; dy++) {
-                        for (dx = -1; dx <= 1; dx++) {
-                            int nx = cx + dx;
-                            int ny = cy + dy;
-
-                            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                                int n_idx = ny * width + nx;
-                                if (image[n_idx] > threshold && visited[n_idx] != frame_number) {
-                                    if (tail < MAX_BLOB_PIXELS) {
-                                        visited[n_idx] = frame_number;
-                                        queue_x[tail] = nx;
-                                        queue_y[tail] = ny;
-                                        tail++;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                double val = (double)image[cy * width + cx] - (double)threshold;
+                if (val < 0.0) val = 0.0;
+                sum_intensity += val;
+                sum_u += val * cx;
+                sum_v += val * cy;
+                if (val > peak) {
+                    peak = val;
+                    peak_x = cx;
+                    peak_y = cy;
                 }
 
-                if (sum_intensity > 0.0 && tail <= MAX_STAR_PIXELS) {
-                    if (count < max_centroids) {
-                        double u_com = sum_u / sum_intensity;
-                        double v_com = sum_v / sum_intensity;
+                /* check 8-connected neighbors */
+                for (dy = -1; dy <= 1; dy++) {
+                    for (dx = -1; dx <= 1; dx++) {
+                        int nx = cx + dx;
+                        int ny = cy + dy;
 
-                        if (peak_x > 0 && peak_x < width - 1 && peak_y > 0 && peak_y < height - 1) {
-                            double i_c = (double)image[peak_y * width + peak_x];
-                            double i_left = (double)image[peak_y * width + (peak_x - 1)];
-                            double i_right = (double)image[peak_y * width + (peak_x + 1)];
-                            double i_top = (double)image[(peak_y - 1) * width + peak_x];
-                            double i_bottom = (double)image[(peak_y + 1) * width + peak_x];
-
-                            double denom_x = i_left - 2.0 * i_c + i_right;
-                            double denom_y = i_top - 2.0 * i_c + i_bottom;
-
-                            if (fabs(denom_x) > 1e-5 && fabs(denom_y) > 1e-5) {
-                                double sub_dx = 0.5 * (i_left - i_right) / denom_x;
-                                double sub_dy = 0.5 * (i_top - i_bottom) / denom_y;
-                                if (fabs(sub_dx) <= 0.5 && fabs(sub_dy) <= 0.5) {
-                                    centroids[count].u =
-                                        0.5 * u_com + 0.5 * ((double)peak_x + sub_dx);
-                                    centroids[count].v =
-                                        0.5 * v_com + 0.5 * ((double)peak_y + sub_dy);
-                                } else {
-                                    centroids[count].u = u_com;
-                                    centroids[count].v = v_com;
-                                }
-                            } else {
-                                centroids[count].u = u_com;
-                                centroids[count].v = v_com;
-                            }
-                        } else {
-                            centroids[count].u = u_com;
-                            centroids[count].v = v_com;
-                        }
-
-                        centroids[count].peak = peak;
-                        centroids[count].flux = sum_intensity;
-                        centroids[count].num_pixels = tail;
-                        count++;
+                        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+                        int n_idx = ny * width + nx;
+                        if (image[n_idx] <= threshold || visited[n_idx] == frame_number ||
+                            tail >= MAX_BLOB_PIXELS)
+                            continue;
+                        visited[n_idx] = frame_number;
+                        queue_x[tail] = nx;
+                        queue_y[tail++] = ny;
                     }
                 }
             }
+
+            if (sum_intensity <= 0.0 || tail > MAX_STAR_PIXELS || count >= max_centroids) continue;
+            starfix_centroid_t* centroid = &centroids[count++];
+            *centroid = (starfix_centroid_t){sum_u / sum_intensity, sum_v / sum_intensity, peak,
+                                             sum_intensity, tail};
+            refine_centroid(image, width, height, peak_x, peak_y, centroid);
         }
     }
 
-    /* sort detected centroids by integrated flux (brightest first) */
-    sort_centroids(centroids, count);
+    qsort(centroids, (size_t)count, sizeof(*centroids), compare_centroids);
 
     if (telem) {
         telem->num_stars_detected = (uint32_t)count;
     }
-    if (owns_visited) {
+    if (!visited_mask) {
         free(visited);
     }
     return STARFIX_SUCCESS;

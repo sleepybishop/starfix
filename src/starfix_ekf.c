@@ -123,8 +123,6 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     double S[2][2];
     double S_inv[2][2];
     double K[4][2];
-    double KH[4][4];
-    double I_KH[4][4];
     double P_next[4][4];
     int i, j, k;
 
@@ -169,24 +167,13 @@ starfix_status_t starfix_ekf_correct(starfix_ekf_t* filter, double celestial_lat
     while (filter->lon > 180.0) filter->lon -= 360.0;
     while (filter->lon < -180.0) filter->lon += 360.0;
 
-    /* P = (I - K H) P; H selects the first two state components */
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
-            KH[i][j] = (j < 2) ? K[i][j] : 0.0;
-        }
-    }
-
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
-            I_KH[i][j] = (i == j ? 1.0 : 0.0) - KH[i][j];
-        }
-    }
-
+    /* H selects lat/lon; form each coefficient of I - K H as needed */
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             P_next[i][j] = 0.0;
             for (k = 0; k < 4; k++) {
-                P_next[i][j] += I_KH[i][k] * filter->P[k][j];
+                double coefficient = (i == k ? 1.0 : 0.0) - (k < 2 ? K[i][k] : 0.0);
+                P_next[i][j] += coefficient * filter->P[k][j];
             }
         }
     }

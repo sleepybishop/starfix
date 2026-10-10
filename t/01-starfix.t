@@ -77,6 +77,7 @@ use Test::More;
     ok($output =~ /Test 2b: Rejecting corrupt database indices.*Passed/s, "Star ID Test 2b (corrupt database rejection) passed");
     ok($output =~ /Test 3: Lost-in-Space Star Identification.*Passed/s, "Star ID Test 3 (pattern search matching) passed");
     ok($output =~ /Test 3b: Tracking Mode with Attitude Hint.*Passed/s, "Star ID Test 4 (tracking mode with attitude hint) passed");
+    ok($output =~ /Test 3c: Blind fallback and output bounds.*Passed/s, "Star ID blind fallback, capacity, and independent-star checks passed");
     ok($output =~ /Test 4: Stellar Precession Propagation.*Passed/s, "Star ID Test 5 (astrometry propagation) passed");
 }
 

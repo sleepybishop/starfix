@@ -68,7 +68,7 @@ int main() {
     FILE* corrupt_file = fopen(corrupt_path, "wb");
     starfix_catalog_star_t* corrupt_catalog = NULL;
     starfix_hash_entry_t* corrupt_hash = NULL;
-    uint32_t corrupt_stars = 0, corrupt_entries = 0, corrupt_factor = 0;
+    uint32_t corrupt_stars = 99, corrupt_entries = 99, corrupt_factor = 99;
     int corrupt_status = STARFIX_ERR_MEMORY;
     if (corrupt_file != NULL) {
         if (fwrite(corrupt_db, 1, sizeof(corrupt_db), corrupt_file) == sizeof(corrupt_db)) {
@@ -81,7 +81,7 @@ int main() {
         remove(corrupt_path);
     }
     if (corrupt_status == STARFIX_ERR_DATA_CORRUPTION && corrupt_catalog == NULL &&
-        corrupt_hash == NULL) {
+        corrupt_hash == NULL && corrupt_stars == 0 && corrupt_entries == 0 && corrupt_factor == 0) {
         printf("Passed\n");
     } else {
         printf("FAILED (status=%d)\n", corrupt_status);
@@ -197,6 +197,28 @@ int main() {
                    cat_idx, catalog[cat_idx].hip,
                    (catalog[cat_idx].hip == 26241) ? "Hatysa" : "Unknown");
         }
+        printf("Test 3c: Blind fallback and output bounds... ");
+        const double wrong_hint[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        starfix_match_t limited[4] = {{-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}};
+        starfix_telemetry_t fallback = {0};
+        int fallback_status =
+            (RESET_ARENA(), starfix_identify_stars(count, centroids, 1024, 1024, 12.0, num_stars,
+                                                   catalog, num_entries, hash_table, bin_factor, 3,
+                                                   limited, &arena, &fallback, wrong_hint));
+        int fallback_ok = fallback_status == STARFIX_SUCCESS && fallback.identify_matches == 3 &&
+                          memcmp(limited, out_matches, 3 * sizeof(*limited)) == 0 &&
+                          limited[3].centroid_idx == -1 && limited[3].catalog_idx == -1;
+        int quad_status =
+            (RESET_ARENA(),
+             starfix_identify_stars(4, centroids, 1024, 1024, 12.0, num_stars, catalog, num_entries,
+                                    hash_table, bin_factor, 3, limited, &arena, &fallback, NULL));
+        if (!fallback_ok || quad_status != STARFIX_ERR_IDENTIFY_NO_MATCH ||
+            fallback.identify_matches != 0) {
+            printf("FAILED (fallback=%d, quad=%d)\n", fallback_status, quad_status);
+            return -1;
+        }
+        printf("Passed\n");
+
         /* 3b. Tracking Mode Check (with attitude hint) */
         printf("Test 3b: Tracking Mode with Attitude Hint... ");
         starfix_vector3_t w_vecs[20], v_vecs[20];
