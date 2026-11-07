@@ -18,7 +18,8 @@ all: starfix_cli
 
 tests: all $(TESTS)
 
-simulations: examples/starfix_sim examples/starfix_navigation
+simulations: examples/starfix_sim examples/starfix_navigation libstarfix.a libstarfix_navigation.a
+	$(MAKE) -C prototype
 
 navigation: libstarfix_navigation.a examples/starfix_navigation
 
@@ -45,7 +46,10 @@ t/test_contracts: src/test_contracts.o libstarfix.a libstarfix_navigation.a
 t/test_cli_io: src/test_cli_io.o tools/starfix_cli_io.o
 	$(CC) $^ -o $@ $(LDFLAGS)
 
-t/test_photo t/test_solver t/test_centroid t/test_attitude t/test_identify: t/%: src/%.o libstarfix.a
+t/test_photo t/test_solver t/test_centroid t/test_attitude: t/%: src/%.o libstarfix.a
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+t/test_identify: src/test_identify.o tools/starfix_cli_io.o libstarfix.a
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 t/test_ekf t/test_graph: t/%: src/%.o libstarfix_navigation.a
@@ -61,13 +65,14 @@ examples/starfix_navigation: examples/starfix_navigation.o libstarfix_navigation
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 indent:
-	clang-format -i src/*.c src/*.h tools/*.c tools/*.h examples/*.c
+	clang-format -i src/*.c src/*.h tools/*.c tools/*.h examples/*.c prototype/*.c prototype/*.h
 
 lint:
 	cppcheck --enable=all --suppress=missingIncludeSystem src/*.c src/*.h
 	clang-tidy src/*.c src/*.h -- -Isrc
 
 check: tests simulations
+	$(MAKE) -C prototype check
 	prove -v t/*.t
 	PYTHONDONTWRITEBYTECODE=1 python3 t/test_photo.py
 
@@ -79,6 +84,7 @@ db:
 	perl scripts/generate_database.pl
 
 clean:
+	$(MAKE) -C prototype clean
 	rm -f $(TESTS) starfix_cli examples/starfix_sim examples/starfix_navigation *.o *.a
 	rm -f src/*.o src/*.d tools/*.o tools/*.d examples/*.o examples/*.d
 	rm -f data/step1_centroids.png data/step2_identified.png data/step2b_zenith_camera.png data/step2c_zenith_celestial.png data/step2d_earth_coordinates.png data/step3_position.png data/solved_position.json

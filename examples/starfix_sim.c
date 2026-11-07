@@ -17,68 +17,7 @@ static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 #include "starfix_photo.h"
 #include "starfix_solver.h"
 
-static int write_attitude_json(const char* path, double ra, double dec, double roll,
-                               const double R[3][3]) {
-    FILE* f = fopen(path, "w");
-    if (f == NULL) return -1;
-
-    fprintf(f, "{\n");
-    fprintf(f, "  \"ra_deg\": %.8f,\n", ra);
-    fprintf(f, "  \"dec_deg\": %.8f,\n", dec);
-    fprintf(f, "  \"roll_deg\": %.8f,\n", roll);
-    fprintf(f, "  \"R\": [\n");
-    fprintf(f, "    [%.16f, %.16f, %.16f],\n", R[0][0], R[0][1], R[0][2]);
-    fprintf(f, "    [%.16f, %.16f, %.16f],\n", R[1][0], R[1][1], R[1][2]);
-    fprintf(f, "    [%.16f, %.16f, %.16f]\n", R[2][0], R[2][1], R[2][2]);
-    fprintf(f, "  ]\n");
-    fprintf(f, "}\n");
-    fclose(f);
-    return 0;
-}
-
-static int read_attitude_json_R(const char* path, double R[3][3]) {
-    FILE* f = fopen(path, "r");
-    if (f == NULL) return -1;
-
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc((size_t)sz + 1);
-    if (buf == NULL) {
-        fclose(f);
-        return -2;
-    }
-    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
-        free(buf);
-        fclose(f);
-        return -3;
-    }
-    buf[sz] = '\0';
-    fclose(f);
-
-    char* p = strstr(buf, "\"R\"");
-    if (!p) {
-        free(buf);
-        return -4;
-    }
-
-    int count = 0;
-    while (count < 9) {
-        p = strpbrk(p, "0123456789.-");
-        if (!p) break;
-        int r = count / 3;
-        int c = count % 3;
-        R[r][c] = atof(p);
-        /* advance past number */
-        while (*p && (strchr("0123456789.eE+-", *p) != NULL)) p++;
-        count++;
-    }
-
-    free(buf);
-    return (count == 9) ? 0 : -5;
-}
-
-static int do_estimate_pose() {
+static int do_estimate_pose(void) {
     starfix_match_t matches[30];
     int match_count = read_identified_json("data/identified_stars.json", matches, 30);
     if (match_count < 3) {
@@ -94,9 +33,7 @@ static int do_estimate_pose() {
     }
 
     /* calculate current year dynamically and propagate stellar precession */
-    time_t t_now = time(NULL);
-    struct tm* tm_now = gmtime(&t_now);
-    double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
+    double current_year = current_year_utc();
     printf("Propagating catalog precession to year %.2f...\n", current_year);
     starfix_propagate_astrometry(db.stars, db.num_stars, current_year);
 
@@ -138,14 +75,15 @@ static int do_estimate_pose() {
     printf("Roll            |       %10.6f |     0.000000\n", roll);
     printf("-------------------------------------------------------\n");
 
-    write_attitude_json("data/attitude.json", ra, dec, roll, (const double (*)[3])R);
+    if (write_attitude_json("data/attitude.json", ra, dec, roll, (const double (*)[3])R) < 0)
+        return -1;
 
     return 0;
 }
 
-static int do_solve_fix() {
+static int do_solve_fix(void) {
     double R[3][3];
-    if (read_attitude_json_R("data/attitude.json", R) != 0) {
+    if (read_attitude_json("data/attitude.json", R) != 0) {
         printf("Error reading estimated attitude matrix R.\n");
         return -1;
     }

@@ -15,8 +15,9 @@ extern "C" {
 starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* w,
                                         const starfix_vector3_t* v, double R_est[3][3]);
 
-/* RANSAC attitude fit with threshold_deg angular tolerance; vectors and outputs as above.
- * Returns inliers or a negative error; refits all observations if no pair survives. */
+/* consensus attitude fit with threshold_deg angular tolerance; vectors and outputs as above.
+ * tests every pair for <= 20 observations, otherwise 190 deterministic samples over all inputs.
+ * returns inliers (>= 2) or a negative error */
 int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
                                   const starfix_vector3_t* v, double threshold_deg,
                                   double R_est[3][3], starfix_arena_t arena);
@@ -25,10 +26,6 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
 starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
                                             const starfix_vector3_t* z_cam, double temp_c,
                                             double press_hpa);
-
-/* apply aberration to catalog unit vectors in place using ICRS observer velocity in km/s */
-starfix_status_t starfix_correct_aberration(int num_stars, starfix_vector3_t* v,
-                                            const double v_obs_km_s[3]);
 
 #ifdef __cplusplus
 }

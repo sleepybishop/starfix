@@ -21,20 +21,11 @@ static void check(int passed, const char* name) {
 int main(void) {
     unsigned char image[4] = {0};
     starfix_centroid_t centroids[5] = {{0}};
-    int u[2], v[2];
     check(starfix_find_centroids(NULL, 2, 2, 1, 1, centroids, NULL, 1) == STARFIX_ERR_NULL_POINTER,
           "centroid null image");
     check(
         starfix_find_centroids(image, 0, 2, 1, 1, centroids, NULL, 1) == STARFIX_ERR_INVALID_PARAM,
         "centroid dimensions");
-    check(starfix_calibrate_hot_pixels(NULL, 2, 2, 1, 2, u, v) == STARFIX_ERR_NULL_POINTER &&
-              starfix_calibrate_hot_pixels(image, 0, 2, 1, 2, u, v) == STARFIX_ERR_INVALID_PARAM &&
-              starfix_calibrate_hot_pixels(image, INT_MAX, 2, 1, 2, u, v) ==
-                  STARFIX_ERR_INVALID_PARAM,
-          "hot-pixel null image and dimensions");
-    check(starfix_apply_hot_pixel_mask(image, 2, 2, -1, u, v) == STARFIX_ERR_INVALID_PARAM &&
-              starfix_apply_hot_pixel_mask(NULL, 2, 2, 0, u, v) == STARFIX_ERR_NULL_POINTER,
-          "hot-pixel count and null image");
 
     starfix_vector3_t stars[2] = {{1, 0, 0}, {0, 1, 0}};
     double R[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, before[3][3];
@@ -49,10 +40,6 @@ int main(void) {
     check(starfix_correct_refraction(1, NULL, stars, 10, 1010) == STARFIX_ERR_NULL_POINTER &&
               starfix_correct_refraction(0, stars, stars, 10, 1010) == STARFIX_ERR_INVALID_PARAM,
           "refraction pointer and count errors");
-    double velocity[3] = {0};
-    check(starfix_correct_aberration(1, stars, NULL) == STARFIX_ERR_NULL_POINTER &&
-              starfix_correct_aberration(0, stars, velocity) == STARFIX_ERR_INVALID_PARAM,
-          "aberration pointer and count errors");
 
     starfix_db_t db = {0};
     check(starfix_load_db("/dev/null/starfix.bin", &db) == STARFIX_ERR_IO && !db.stars &&
@@ -126,6 +113,14 @@ int main(void) {
     check(starfix_format_nmea(12.999998, 45.999998, 0, output, sizeof(output)) == STARFIX_SUCCESS &&
               strstr(output, ",1259.9999,N,04559.9999,E,") != NULL,
           "NMEA values below the carry boundary keep their degrees");
+    check(starfix_format_nmea_fix(37.8, -122.4, 0, 1, 9, 5.4, 212.3, output, sizeof(output)) ==
+                  STARFIX_SUCCESS &&
+              strstr(output, ",1,09,1.0,") != NULL && strstr(output, ",5.4,212.3,") != NULL,
+          "NMEA star fix quality, star count, speed, and heading");
+    check(starfix_format_nmea_fix(37.8, -122.4, 0, 6, 0, NAN, NAN, output, sizeof(output)) ==
+                  STARFIX_SUCCESS &&
+              strstr(output, ",6,00,1.0,") != NULL && strstr(output, ",W,,,010170,") != NULL,
+          "NMEA dead reckoning quality and omitted speed/heading when unavailable");
     if (!failures) puts("Public contract checks passed");
     return failures ? 1 : 0;
 }

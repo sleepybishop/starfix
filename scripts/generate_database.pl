@@ -217,24 +217,25 @@ sub main {
     print $ofh "SFIX";
     print $ofh pack("V V V", $num_stars, scalar(@entry_records), $bin_factor);
     
-    # write star catalog records (signed 32-bit hip, quantized 16-bit ra, dec, quantized 8-bit mag)
+    # Byte 11 identifies coordinate encoding: 0 = legacy 16-bit, 1 = 24-bit.
+    # Write signed 32-bit hip, 24-bit ra/dec, 8-bit mag, and the format tag.
     foreach my $star (@filtered_stars) {
         my $ra_val = $star->{ra};
         while ($ra_val < 0.0) { $ra_val += 2.0 * 3.1415926535897932; }
         while ($ra_val >= 2.0 * 3.1415926535897932) { $ra_val -= 2.0 * 3.1415926535897932; }
-        my $ra_q = int($ra_val * 65535.0 / (2.0 * 3.1415926535897932) + 0.5);
+        my $ra_q = int($ra_val * 16777215.0 / (2.0 * 3.1415926535897932) + 0.5);
 
         my $dec_val = $star->{dec};
         if ($dec_val < -3.1415926535897932 / 2.0) { $dec_val = -3.1415926535897932 / 2.0; }
         if ($dec_val > 3.1415926535897932 / 2.0) { $dec_val = 3.1415926535897932 / 2.0; }
-        my $dec_q = int(($dec_val + 3.1415926535897932 / 2.0) * 65535.0 / 3.1415926535897932 + 0.5);
+        my $dec_q = int(($dec_val + 3.1415926535897932 / 2.0) * 16777215.0 / 3.1415926535897932 + 0.5);
 
         my $mag_val = $star->{mag};
         if ($mag_val < -2.0) { $mag_val = -2.0; }
         if ($mag_val > 8.0) { $mag_val = 8.0; }
         my $mag_q = int(($mag_val + 2.0) * 255.0 / 10.0 + 0.5);
 
-        print $ofh pack("V v v C C C C", $star->{hip}, $ra_q, $dec_q, $mag_q, 0, 0, 0);
+        print $ofh pack("V v v C C C C", $star->{hip}, $ra_q >> 8, $dec_q >> 8, $mag_q, $ra_q & 0xff, $dec_q & 0xff, 1);
     }
     
     # Write hash entries (uint32_t hash_key, uint16_t stars[4])

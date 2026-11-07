@@ -47,37 +47,6 @@ def decimal_year(utc_time):
     return utc_time.year + (utc_time - start).total_seconds() / (end - start).total_seconds()
 
 
-def parse_rational(value):
-    numerator, denominator = value
-    if denominator == 0:
-        raise ValueError("zero EXIF rational denominator")
-    return float(numerator) / float(denominator)
-
-
-def get_exif_gps(gps_ifd):
-    if not gps_ifd:
-        return None, None
-    try:
-        lat_ref = gps_ifd[piexif.GPSIFD.GPSLatitudeRef].decode("ascii").upper()
-        lon_ref = gps_ifd[piexif.GPSIFD.GPSLongitudeRef].decode("ascii").upper()
-        lat_val = gps_ifd[piexif.GPSIFD.GPSLatitude]
-        lon_val = gps_ifd[piexif.GPSIFD.GPSLongitude]
-        lat = parse_rational(lat_val[0]) + parse_rational(lat_val[1]) / 60.0
-        lat += parse_rational(lat_val[2]) / 3600.0
-        lon = parse_rational(lon_val[0]) + parse_rational(lon_val[1]) / 60.0
-        lon += parse_rational(lon_val[2]) / 3600.0
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
-        return None, None
-
-    if lat_ref not in ("N", "S") or lon_ref not in ("E", "W"):
-        return None, None
-    lat = -lat if lat_ref == "S" else lat
-    lon = -lon if lon_ref == "W" else lon
-    if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
-        return None, None
-    return lat, lon
-
-
 def get_user_comment(exif_ifd):
     if not exif_ifd:
         return None
@@ -190,11 +159,16 @@ def run_command(command, work_dir):
 
 
 def parse_solver_output(result):
-    parsed = {"rms": math.inf, "rotation": None, "inliers": 0, "matches": 0}
+    parsed = {"rms": math.inf, "rotation": None, "inliers": 0, "matches": 0, "fov_deg": None}
     if result.returncode != 0:
         return parsed
     for line in result.stdout.splitlines():
-        if line.startswith("RMS_ERROR:"):
+        if line.startswith("SOLVED_FOV:"):
+            try:
+                parsed["fov_deg"] = float(line.split()[1])
+            except (IndexError, ValueError):
+                pass
+        elif line.startswith("RMS_ERROR:"):
             try:
                 parsed["rms"] = float(line.split()[1])
             except (IndexError, ValueError):
@@ -228,7 +202,7 @@ def solution_is_acceptable(solution):
 
 
 def solve_plate(image_path, exif_dict, cli_bin, work_dir, utc_dt,
-                zenith_camera=(0.0, 0.0, 1.0), fit_attitude=None):
+                zenith_camera=(0.0, 0.0, 1.0)):
     """Identify stars and fit attitude; leave the selected crop/matches in work_dir/data."""
     with Image.open(image_path) as source:
         width, height = ImageOps.exif_transpose(source).size
@@ -245,17 +219,6 @@ def solve_plate(image_path, exif_dict, cli_bin, work_dir, utc_dt,
         crop_center_to_pgm(image_path, os.path.join(data_dir, "mock_image.pgm"), crop_size)
         fov_estimate = estimate_crop_fov(exif_dict, width, height, crop_size)
 
-        def identify(fov):
-            return run_command([cli_bin, "--identify", str(crop_size), str(crop_size),
-                                f"{fov:.9f}", f"{year:.9f}"], work_dir)
-
-        def solve(fov):
-            if fit_attitude is not None:
-                return fit_attitude(fov, crop_size)
-            return parse_solver_output(run_command([
-                cli_bin, "--fit-photo", *(f"{value:.12f}" for value in zenith_camera),
-                f"{fov:.9f}", f"{year:.9f}", str(crop_size)], work_dir))
-
         for threshold in (45, 35):
             detected_result = run_command([cli_bin, "--centroid", str(threshold)], work_dir)
             if detected_result.returncode != 0:
@@ -271,45 +234,14 @@ def solve_plate(image_path, exif_dict, cli_bin, work_dir, utc_dt,
             with open(centroids_path, "w", encoding="utf-8") as output:
                 json.dump(centroids, output)
 
-            low_search = max(2.0, fov_estimate * 0.75)
-            high_search = min(90.0, fov_estimate * 1.25)
-            step = (high_search - low_search) / 40.0
-            best = None
-            for i in range(41):
-                fov = low_search + i * step
-                if identify(fov).returncode != 0:
-                    continue
-                candidate = solve(fov)
-                if not solution_is_acceptable(candidate):
-                    continue
-                score = (candidate["inliers"], -candidate["rms"])
-                if best is None or score > best[0]:
-                    with open(matches_path, encoding="utf-8") as source:
-                        best = (score, fov, json.load(source), candidate)
-            if best is None:
-                continue
-            with open(matches_path, "w", encoding="utf-8") as output:
-                json.dump(best[2], output)
-
-            # Keep the correspondence fixed while refining focal length.
-            half_width = max(step, best[1] * 0.025)
-            low, high = max(1.0, best[1] - half_width), min(100.0, best[1] + half_width)
-            ratio = (math.sqrt(5.0) - 1.0) / 2.0
-            x1, x2 = high - ratio * (high - low), low + ratio * (high - low)
-            solution1, solution2 = solve(x1), solve(x2)
-            for _ in range(18):
-                if solution1["rms"] <= solution2["rms"]:
-                    high, x2, solution2 = x2, x1, solution1
-                    x1 = high - ratio * (high - low)
-                    solution1 = solve(x1)
-                else:
-                    low, x1, solution1 = x1, x2, solution2
-                    x2 = low + ratio * (high - low)
-                    solution2 = solve(x2)
-            fov, solution = min(((best[1], best[3]), (x1, solution1), (x2, solution2)),
-                                key=lambda item: item[1]["rms"])
-            if solution_is_acceptable(solution):
-                return {"crop_size": crop_size, "fov_deg": fov, "solution": solution,
-                        "centroids": centroids, "identified": best[2],
-                        "width": width, "height": height}
+            sweep_result = run_command([
+                cli_bin, "--sweep-photo", *(f"{value:.12f}" for value in zenith_camera),
+                f"{fov_estimate:.9f}", f"{year:.9f}", str(crop_size)], work_dir)
+            solution = parse_solver_output(sweep_result)
+            if solution_is_acceptable(solution) and solution["fov_deg"] is not None:
+                with open(matches_path, encoding="utf-8") as source:
+                    identified = json.load(source)
+                return {"crop_size": crop_size, "fov_deg": solution["fov_deg"],
+                        "solution": solution, "centroids": centroids,
+                        "identified": identified, "width": width, "height": height}
     raise RuntimeError("no verified plate solution after searching central and wider crops")

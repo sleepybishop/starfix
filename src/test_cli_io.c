@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "starfix_cli_io.h"
@@ -86,9 +87,23 @@ int main(int argc, char** argv) {
     assert(read_identified_json(path, readback, 2) < 0);
 
     const double rotation[3][3] = {{0, 1, 0}, {0, 0, 1}, {1, 0, 0}};
-    double ra, dec, roll;
+    double ra, dec, roll, loaded_rotation[3][3];
     starfix_rotation_to_euler(rotation, &ra, &dec, &roll);
     assert(fabs(ra) < 1e-12 && fabs(dec) < 1e-12 && fabs(roll) < 1e-12);
+    assert(write_attitude_json(path, ra, dec, roll, rotation) == 0);
+    assert(read_attitude_json(path, loaded_rotation) == 0);
+    assert(memcmp(rotation, loaded_rotation, sizeof(rotation)) == 0);
+    assert(remove(path) == 0);
+
+    write_text(path, "P5\n# comment line\n2 2\n# maxval comment\n255\nABCD");
+    int w = 0, h = 0;
+    unsigned char* pgm = read_pgm(path, &w, &h);
+    assert(pgm && w == 2 && h == 2 && memcmp(pgm, "ABCD", 4) == 0);
+    free(pgm);
+    write_text(path, "P5\n-2 2\n255\nABCD");
+    assert(read_pgm(path, &w, &h) == NULL);
+    assert(remove(path) == 0);
+
     puts("CLI I/O checks passed");
     return 0;
 }

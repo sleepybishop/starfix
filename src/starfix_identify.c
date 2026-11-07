@@ -72,11 +72,23 @@ starfix_status_t starfix_load_db(const char* db_path, starfix_db_t* db) {
         uint16_t ra_q = decode_le16(record + 4);
         uint16_t dec_q = decode_le16(record + 6);
         uint8_t mag_q = record[8];
+        uint8_t ra_lo = record[9];
+        uint8_t dec_lo = record[10];
+        /* byte 11 tags coordinate encoding: 0 = legacy 16-bit, 1 = 24-bit */
+        uint8_t coordinate_format = record[11];
+        if (coordinate_format > 1 || (coordinate_format == 0 && (ra_lo || dec_lo))) goto done;
         memcpy(&hip, &hip_bits, sizeof(hip));
 
         catalog[i].hip = hip;
-        catalog[i].ra0 = ra_q * (2.0 * M_PI) / 65535.0;
-        catalog[i].dec0 = dec_q * M_PI / 65535.0 - M_PI / 2.0;
+        if (coordinate_format == 1) {
+            uint32_t ra_24 = ((uint32_t)ra_q << 8) | ra_lo;
+            uint32_t dec_24 = ((uint32_t)dec_q << 8) | dec_lo;
+            catalog[i].ra0 = ra_24 * (2.0 * M_PI) / 16777215.0;
+            catalog[i].dec0 = dec_24 * M_PI / 16777215.0 - M_PI / 2.0;
+        } else {
+            catalog[i].ra0 = ra_q * (2.0 * M_PI) / 65535.0;
+            catalog[i].dec0 = dec_q * M_PI / 65535.0 - M_PI / 2.0;
+        }
         catalog[i].ra = catalog[i].ra0;
         catalog[i].dec = catalog[i].dec0;
         catalog[i].mag = mag_q * 10.0 / 255.0 - 2.0;
@@ -156,19 +168,22 @@ static int verify_quad(const starfix_vector3_t w_seed[4], const starfix_vector3_
         double dot = starfix_dot(w_seed[seed], rotated);
         if (dot < verify_cos) return 0;
     }
+    starfix_vector3_t celestial_obs[20];
     int nearest[20];
     double nearest_dot[20];
     for (int i = 0; i < num_observed; i++) {
+        const starfix_vector3_t* w = &observed[i];
+        celestial_obs[i] = (starfix_vector3_t){R[0][0] * w->x + R[1][0] * w->y + R[2][0] * w->z,
+                                               R[0][1] * w->x + R[1][1] * w->y + R[2][1] * w->z,
+                                               R[0][2] * w->x + R[1][2] * w->y + R[2][2] * w->z};
         nearest[i] = -1;
         nearest_dot[i] = verify_cos;
     }
     for (int j = 0; j < (int)num_stars; j++) {
         starfix_vector3_t v = catalog_vectors[j];
-        double z = starfix_row_dot(R[2], v);
-        if (z < field_cos) continue;
-        starfix_vector3_t rotated = {starfix_row_dot(R[0], v), starfix_row_dot(R[1], v), z};
+        if (starfix_row_dot(R[2], v) < field_cos) continue;
         for (int i = 0; i < num_observed; i++) {
-            double dot = starfix_dot(rotated, observed[i]);
+            double dot = starfix_dot(v, celestial_obs[i]);
             if (dot > nearest_dot[i]) {
                 nearest_dot[i] = dot;
                 nearest[i] = j;
@@ -293,6 +308,8 @@ static void match_quad(const starfix_vector3_t w[4], const double angles[6], con
         if (i < 6) continue;
         starfix_vector3_t seed[4];
         for (int j = 0; j < 4; j++) seed[j] = v[perms[p][j]];
+        /* Near-collinear seeds can change handedness within the measurement tolerance.
+         * Let the proper-rotation fit and its angular residuals reject mirrored fields. */
         match_set_t fit;
         fit.count = verify_quad(w, seed, count, camera, num_stars, catalog, verify_cos, field_cos,
                                 fit.matches, &fit.error);
@@ -398,16 +415,19 @@ starfix_status_t starfix_propagate_astrometry(starfix_catalog_star_t* catalog, u
     if (!num_stars || !isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
 
     double mjd = starfix_year_to_mjd(year);
+    double P[3][3], aberration[3];
+    starfix_astrometry_frame(mjd, P, aberration);
     for (uint32_t i = 0; i < num_stars; i++) {
-        double ra = catalog[i].ra0;
-        double dec = catalog[i].dec0;
-
-        starfix_precess(mjd, &ra, &dec);
-        starfix_nutation(mjd, &ra, &dec);
-        starfix_aberration(mjd, &ra, &dec);
-
+        starfix_vector3_t v0 = starfix_celestial_ray(catalog[i].ra0, catalog[i].dec0);
+        starfix_vector3_t v = starfix_rotate((const double (*)[3])P, v0);
+        double x = v.x + aberration[0];
+        double y = v.y + aberration[1];
+        double z = v.z + aberration[2];
+        double r = hypot(hypot(x, y), z);
+        double ra = atan2(y, x);
+        if (ra < 0.0) ra += 2.0 * M_PI;
         catalog[i].ra = ra;
-        catalog[i].dec = dec;
+        catalog[i].dec = asin(z / r);
     }
 
     return STARFIX_SUCCESS;

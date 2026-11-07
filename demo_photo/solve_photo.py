@@ -40,6 +40,29 @@ def get_camera_zenith(tilts):
     return g_x, g_y, math.sqrt(max(0.0, g_z_sq))
 
 
+def refract_camera_ray(camera, zenith):
+    cos_theta = sum(c * z for c, z in zip(camera, zenith))
+    cos_theta = max(-1.0, min(1.0, cos_theta))
+    theta_t = math.acos(cos_theta)
+    alt_t = math.pi / 2.0 - theta_t
+    if theta_t <= 1e-6 or alt_t <= 0.0:
+        return camera
+    alt_deg = math.degrees(alt_t)
+    if alt_deg >= 15.0:
+        refraction = 7.888888e-5 * 1010.0 / (283.0 * math.tan(alt_t))
+    else:
+        num = ((2e-5 * alt_deg + 1.96e-2) * alt_deg + 1.594e-1) * 1010.0
+        den = 283.0 * ((8.45e-2 * alt_deg + 5.05e-1) * alt_deg + 1.0)
+        refraction = math.radians(num / den)
+    theta_a = max(0.0, theta_t - refraction)
+    tangent = [c - cos_theta * z for c, z in zip(camera, zenith)]
+    norm = math.sqrt(sum(t * t for t in tangent))
+    if norm <= 1e-12:
+        return camera
+    return [math.cos(theta_a) * z + math.sin(theta_a) * (t / norm)
+            for z, t in zip(zenith, tangent)]
+
+
 def solve_photo_overlay(image_path, zenith_camera=None):
     image_path = os.path.abspath(image_path)
     exif_dict = piexif.load(image_path)
@@ -92,8 +115,8 @@ def solve_photo_overlay(image_path, zenith_camera=None):
         draw.ellipse((x - 12, y - 12, x + 12, y + 12), outline="red", width=2)
         ra, dec = match["ra"], match["dec"]
         celestial = (math.cos(dec)*math.cos(ra), math.cos(dec)*math.sin(ra), math.sin(dec))
-        camera = [sum(rotation[row][column]*celestial[column] for column in range(3))
-                  for row in range(3)]
+        camera = refract_camera_ray([sum(rotation[row][column]*celestial[column]
+                                         for column in range(3)) for row in range(3)], zenith)
         if camera[2] <= 0:
             continue
         x = left + size/2 + focal * camera[0]/camera[2]

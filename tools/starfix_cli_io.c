@@ -7,10 +7,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+double current_year_utc(void) {
+    time_t now = time(NULL);
+    struct tm* utc = gmtime(&now);
+    return utc ? 1900.0 + utc->tm_year + utc->tm_yday / 365.25 : NAN;
+}
 
 static const char* skip_space(const char* text) {
     while (isspace((unsigned char)*text)) text++;
@@ -67,7 +74,23 @@ void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec
     *roll_deg = roll_rad * 180.0 / M_PI;
 }
 
+static int read_pgm_int(FILE* f, int* out) {
+    int c;
+    while ((c = fgetc(f)) != EOF) {
+        if (isspace(c)) continue;
+        if (c == '#') {
+            while ((c = fgetc(f)) != EOF && c != '\n') {
+            }
+            continue;
+        }
+        ungetc(c, f);
+        return fscanf(f, "%d", out) == 1;
+    }
+    return 0;
+}
+
 unsigned char* read_pgm(const char* path, int* width, int* height) {
+    if (!path || !width || !height) return NULL;
     FILE* f = fopen(path, "rb");
     if (f == NULL) return NULL;
 
@@ -78,21 +101,26 @@ unsigned char* read_pgm(const char* path, int* width, int* height) {
     }
 
     int w, h, max_val;
-    if (fscanf(f, "%d %d %d", &w, &h, &max_val) != 3 || max_val != 255) {
+    if (!read_pgm_int(f, &w) || !read_pgm_int(f, &h) || !read_pgm_int(f, &max_val) || w <= 0 ||
+        h <= 0 || max_val != 255 || (size_t)w > SIZE_MAX / (size_t)h || w > INT_MAX / h) {
         fclose(f);
         return NULL;
     }
 
     /* skip single whitespace byte after header */
-    fgetc(f);
+    if (fgetc(f) == EOF) {
+        fclose(f);
+        return NULL;
+    }
 
-    unsigned char* data = (unsigned char*)malloc((size_t)w * (size_t)h);
+    size_t size = (size_t)w * (size_t)h;
+    unsigned char* data = (unsigned char*)malloc(size);
     if (data == NULL) {
         fclose(f);
         return NULL;
     }
 
-    if (fread(data, 1, (size_t)w * (size_t)h, f) != (size_t)w * (size_t)h) {
+    if (fread(data, 1, size, f) != size) {
         free(data);
         fclose(f);
         return NULL;
@@ -173,8 +201,12 @@ int read_centroids_json(const char* path, starfix_centroid_t* centroids, int max
     char* object;
     while (count < max_count && (object = next_object(&cursor))) {
         double u, v, flux;
-        if (!json_number_end(parse_double(json_value(object, "\"u\"", "-1"), &u)) ||
-            !json_number_end(parse_double(json_value(object, "\"v\"", "-1"), &v)) ||
+        const char* u_val = json_value(object, "\"u\"", NULL);
+        if (!u_val) u_val = json_value(object, "\"u_true\"", "-1");
+        const char* v_val = json_value(object, "\"v\"", NULL);
+        if (!v_val) v_val = json_value(object, "\"v_true\"", "-1");
+        if (!json_number_end(parse_double(u_val, &u)) ||
+            !json_number_end(parse_double(v_val, &v)) ||
             !json_number_end(parse_double(json_value(object, "\"flux\"", "0"), &flux))) {
             count = STARFIX_ERR_DATA_CORRUPTION;
             break;
@@ -229,4 +261,46 @@ int read_identified_json(const char* path, starfix_match_t* matches, int max_cou
     }
     free(text);
     return count;
+}
+
+int write_attitude_json(const char* path, double ra, double dec, double roll,
+                        const double R[3][3]) {
+    FILE* f = fopen(path, "w");
+    if (f == NULL) return -1;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"ra_deg\": %.8f,\n", ra);
+    fprintf(f, "  \"dec_deg\": %.8f,\n", dec);
+    fprintf(f, "  \"roll_deg\": %.8f,\n", roll);
+    fprintf(f, "  \"R\": [\n");
+    fprintf(f, "    [%.16f, %.16f, %.16f],\n", R[0][0], R[0][1], R[0][2]);
+    fprintf(f, "    [%.16f, %.16f, %.16f],\n", R[1][0], R[1][1], R[1][2]);
+    fprintf(f, "    [%.16f, %.16f, %.16f]\n", R[2][0], R[2][1], R[2][2]);
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
+    return close_output(f);
+}
+
+int read_attitude_json(const char* path, double R[3][3]) {
+    char* text;
+    int status = read_text(path, &text);
+    if (status < 0) return status;
+    const char* cursor = strstr(text, "\"R\"");
+    if (!cursor) {
+        free(text);
+        return STARFIX_ERR_DATA_CORRUPTION;
+    }
+    cursor = strchr(cursor, '[');
+    for (int i = 0; i < 9; i++) {
+        while (cursor && (*cursor == '[' || *cursor == ']' || *cursor == ',' ||
+                          isspace((unsigned char)*cursor)))
+            cursor++;
+        if (!cursor) {
+            free(text);
+            return STARFIX_ERR_DATA_CORRUPTION;
+        }
+        cursor = parse_double(cursor, &R[i / 3][i % 3]);
+    }
+    free(text);
+    return cursor ? 0 : STARFIX_ERR_DATA_CORRUPTION;
 }

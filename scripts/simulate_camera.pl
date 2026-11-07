@@ -86,10 +86,15 @@ sub main {
     my $PI = 3.1415926535897932;
     for (my $i = 0; $i < $num_stars; $i++) {
         my $star_entry = substr($catalog_buf, $i * 12, 12);
-        my ($hip, $ra_q, $dec_q, $mag_q, $p1, $p2, $p3, $p4) = unpack("V v v C C C C", $star_entry);
+        my ($hip, $ra_q, $dec_q, $mag_q, $ra_lo, $dec_lo, $coordinate_format) = unpack("V v v C C C C", $star_entry);
+        # Byte 11 tags coordinates; zero low bytes are valid in the 24-bit format.
+        die "Invalid coordinate format in catalog record $i"
+            if $coordinate_format > 1 || ($coordinate_format == 0 && ($ra_lo || $dec_lo));
         
-        my $ra = $ra_q * (2.0 * $PI) / 65535.0;
-        my $dec = $dec_q * $PI / 65535.0 - $PI / 2.0;
+        my $ra = ($coordinate_format == 1) ? (($ra_q * 256.0 + $ra_lo) * (2.0 * $PI) / 16777215.0)
+                                     : ($ra_q * (2.0 * $PI) / 65535.0);
+        my $dec = ($coordinate_format == 1) ? (($dec_q * 256.0 + $dec_lo) * $PI / 16777215.0 - $PI / 2.0)
+                                      : ($dec_q * $PI / 65535.0 - $PI / 2.0);
         my $mag = $mag_q * 10.0 / 255.0 - 2.0;
         
         push @stars, {

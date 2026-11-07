@@ -1,8 +1,8 @@
+#include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
-#include <stdint.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -21,7 +21,7 @@ typedef struct {
     int num_pixels;
 } StarTrail;
 
-/* Simple PGM Image Reader */
+/* simple PGM image reader */
 static unsigned char* read_pgm(const char* filename, int* width, int* height) {
     FILE* f = fopen(filename, "rb");
     if (!f) return NULL;
@@ -33,11 +33,12 @@ static unsigned char* read_pgm(const char* filename, int* width, int* height) {
     }
 
     int w, h, maxval;
-    if (fscanf(f, "%d %d %d", &w, &h, &maxval) != 3) {
+    if (fscanf(f, "%d %d %d", &w, &h, &maxval) != 3 || w <= 0 || h <= 0 || maxval <= 0 ||
+        maxval > 255) {
         fclose(f);
         return NULL;
     }
-    fgetc(f); /* consume newline */
+    fgetc(f); /* consume delimiter byte */
 
     *width = w;
     *height = h;
@@ -53,11 +54,12 @@ static unsigned char* read_pgm(const char* filename, int* width, int* height) {
     return img;
 }
 
-/* Bresenham's line algorithm to increment accumulator */
-static void draw_line_accumulator(int* accum, int width, int height, int x0, int y0, int x1, int y1) {
+/* bresenham line algorithm to increment accumulator */
+static void draw_line_accumulator(int* accum, int width, int height, int x0, int y0, int x1,
+                                  int y1) {
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-    int err = dx + dy, e2; /* error value e_xy */
+    int err = dx + dy, e2;
 
     for (;;) {
         if (x0 >= 0 && x0 < width && y0 >= 0 && y0 < height) {
@@ -65,8 +67,14 @@ static void draw_line_accumulator(int* accum, int width, int height, int x0, int
         }
         if (x0 == x1 && y0 == y1) break;
         e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
     }
 }
 
@@ -84,22 +92,28 @@ int main(int argc, char** argv) {
     }
     printf("Loaded image %dx%d\n", width, height);
 
-    /* Allocate memory */
-    unsigned char* visited = calloc((size_t)width * height, 1);
-    int* accum = calloc((size_t)width * height, sizeof(int));
+    /* allocate working buffers */
+    unsigned char* visited = calloc((size_t)width * (size_t)height, 1);
+    int* accum = calloc((size_t)width * (size_t)height, sizeof(int));
     StarTrail* trails = calloc(MAX_TRAILS, sizeof(StarTrail));
     int* queue_x = malloc(MAX_BLOB_PIXELS * sizeof(int));
     int* queue_y = malloc(MAX_BLOB_PIXELS * sizeof(int));
-    
+
     if (!visited || !accum || !trails || !queue_x || !queue_y) {
         printf("Memory allocation failed\n");
+        free(image);
+        free(visited);
+        free(accum);
+        free(trails);
+        free(queue_x);
+        free(queue_y);
         return 1;
     }
 
     int num_trails = 0;
     unsigned char threshold = 50;
 
-    /* 1. Extract Trails using BFS Flood-fill */
+    /* 1. extract trails using BFS flood-fill */
     printf("Extracting star trails...\n");
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -135,59 +149,62 @@ int main(int argc, char** argv) {
                     }
                 }
 
-                /* If blob is long enough to be a trail (e.g. > 50 pixels) */
+                /* keep blobs long enough to represent a star trail */
                 if (tail > 50 && num_trails < MAX_TRAILS) {
-                    trails[num_trails].num_pixels = tail;
-                    trails[num_trails].pixels = malloc(tail * sizeof(Point));
-                    for (int i = 0; i < tail; i++) {
-                        trails[num_trails].pixels[i].x = queue_x[i];
-                        trails[num_trails].pixels[i].y = queue_y[i];
+                    Point* pixels = malloc((size_t)tail * sizeof(Point));
+                    if (pixels) {
+                        trails[num_trails].num_pixels = tail;
+                        trails[num_trails].pixels = pixels;
+                        for (int i = 0; i < tail; i++) {
+                            trails[num_trails].pixels[i].x = queue_x[i];
+                            trails[num_trails].pixels[i].y = queue_y[i];
+                        }
+                        num_trails++;
                     }
-                    num_trails++;
                 }
             }
         }
     }
     printf("Found %d valid star trails.\n", num_trails);
 
-    /* 2. Vote for Celestial Pole in Accumulator */
+    /* 2. vote for celestial pole in accumulator */
     printf("Computing Celestial Pole via perpendicular bisectors...\n");
     for (int t = 0; t < num_trails; t++) {
         StarTrail* trail = &trails[t];
-        /* Pick points at 10%, 50%, 90% of the BFS queue (which correlates roughly to spatial spread) */
+        /* sample points near 10% and 90% of the BFS queue */
         int p1_idx = trail->num_pixels / 10;
         int p2_idx = trail->num_pixels - (trail->num_pixels / 10);
-        
+
         Point p1 = trail->pixels[p1_idx];
         Point p2 = trail->pixels[p2_idx];
 
         double mx = (p1.x + p2.x) / 2.0;
         double my = (p1.y + p2.y) / 2.0;
-        
+
         double dx = p2.x - p1.x;
         double dy = p2.y - p1.y;
-        
-        /* Perpendicular vector */
+
+        /* perpendicular vector */
         double px = -dy;
         double py = dx;
-        
-        /* Normalize and extend to cover image */
-        double norm = sqrt(px*px + py*py);
+
+        /* normalize and extend across image */
+        double norm = hypot(px, py);
         if (norm > 0) {
             px /= norm;
             py /= norm;
-            
+
             int ext = width > height ? width : height;
             int start_x = (int)(mx - px * ext);
             int start_y = (int)(my - py * ext);
             int end_x = (int)(mx + px * ext);
             int end_y = (int)(my + py * ext);
-            
+
             draw_line_accumulator(accum, width, height, start_x, start_y, end_x, end_y);
         }
     }
 
-    /* Find max vote in accumulator */
+    /* find max vote in accumulator */
     int max_votes = 0;
     int pole_x = width / 2;
     int pole_y = height / 2;
@@ -202,35 +219,46 @@ int main(int argc, char** argv) {
     }
     printf("Celestial Pole detected at (%d, %d) with %d votes.\n", pole_x, pole_y, max_votes);
 
-    /* 3. Compute Synthetic Centroids (Angular Midpoints) */
+    /* 3. compute synthetic centroids (angular midpoints) */
     printf("Extracting synthetic centroids...\n");
     FILE* out_f = fopen(argv[2], "w");
+    if (!out_f) {
+        printf("Failed to open output file %s\n", argv[2]);
+        for (int t = 0; t < num_trails; t++) free(trails[t].pixels);
+        free(trails);
+        free(image);
+        free(visited);
+        free(accum);
+        free(queue_x);
+        free(queue_y);
+        return 1;
+    }
     fprintf(out_f, "[\n");
-    
+
     int valid_centroids = 0;
     for (int t = 0; t < num_trails; t++) {
         StarTrail* trail = &trails[t];
         double sum_r = 0;
         double sum_vx = 0, sum_vy = 0;
-        
+
         for (int i = 0; i < trail->num_pixels; i++) {
             double rx = trail->pixels[i].x - pole_x;
             double ry = trail->pixels[i].y - pole_y;
-            double r = sqrt(rx*rx + ry*ry);
-            
+            double r = hypot(rx, ry);
+
             sum_r += r;
             if (r > 0) {
                 sum_vx += rx / r;
                 sum_vy += ry / r;
             }
         }
-        
+
         double avg_r = sum_r / trail->num_pixels;
         double avg_theta = atan2(sum_vy, sum_vx);
-        
+
         double synth_x = pole_x + avg_r * cos(avg_theta);
         double synth_y = pole_y + avg_r * sin(avg_theta);
-        
+
         if (valid_centroids > 0) fprintf(out_f, ",\n");
         fprintf(out_f, "  {\"u\": %.2f, \"v\": %.2f}", synth_x, synth_y);
         valid_centroids++;
@@ -239,8 +267,8 @@ int main(int argc, char** argv) {
     fclose(out_f);
     printf("Saved %d synthetic centroids to %s\n", valid_centroids, argv[2]);
 
-    /* Cleanup */
-    for(int t=0; t<num_trails; t++) {
+    /* cleanup */
+    for (int t = 0; t < num_trails; t++) {
         free(trails[t].pixels);
     }
     free(trails);
@@ -249,6 +277,6 @@ int main(int argc, char** argv) {
     free(accum);
     free(queue_x);
     free(queue_y);
-    
+
     return 0;
 }

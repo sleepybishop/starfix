@@ -7,7 +7,7 @@
 
 #include "starfix_status.h"
 
-#define MAX_BLOB_PIXELS 1000
+#define INITIAL_QUEUE_PIXELS 1000
 #define MAX_STAR_PIXELS 300
 
 static int compare_centroids(const void* a, const void* b) {
@@ -54,12 +54,14 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
         if (visited == NULL) return STARFIX_ERR_MEMORY;
         frame_number = 1; /* first frame */
     } else if (frame_number == 0) {
-        /* clear to a different generation, preserving zero for this frame */
-        memset(visited, 0xff, (size_t)width * (size_t)height * sizeof(uint32_t));
+        /* reset the mask; any non-zero frame_number on the next call is fresh */
+        memset(visited, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
+        frame_number = UINT32_MAX;
     }
 
-    int queue_x[MAX_BLOB_PIXELS];
-    int queue_y[MAX_BLOB_PIXELS];
+    int queue_storage[INITIAL_QUEUE_PIXELS];
+    int* queue = queue_storage;
+    int queue_capacity = INITIAL_QUEUE_PIXELS;
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -68,9 +70,10 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
             if (image[idx] <= threshold || visited[idx] == frame_number) continue;
             int head = 0;
             int tail = 1;
+            int pending = 1;
+            int total_pixels = 1;
 
-            queue_x[0] = x;
-            queue_y[0] = y;
+            queue[0] = idx;
             visited[idx] = frame_number;
 
             double sum_intensity = 0.0;
@@ -80,10 +83,12 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
             int peak_x = x;
             int peak_y = y;
 
-            while (head < tail) {
-                int cx = queue_x[head];
-                int cy = queue_y[head];
-                head++;
+            while (pending > 0) {
+                int current = queue[head];
+                int cx = current % width;
+                int cy = current / width;
+                head = (head + 1) % queue_capacity;
+                pending--;
 
                 double val = (double)image[cy * width + cx] - (double)threshold;
                 if (val < 0.0) val = 0.0;
@@ -104,64 +109,57 @@ int starfix_find_centroids(const unsigned char* image, int width, int height,
 
                         if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
                         int n_idx = ny * width + nx;
-                        if (image[n_idx] <= threshold || visited[n_idx] == frame_number ||
-                            tail >= MAX_BLOB_PIXELS)
-                            continue;
+                        if (image[n_idx] <= threshold || visited[n_idx] == frame_number) continue;
+                        if (pending == queue_capacity) {
+                            /* keep every frontier pixel so large blobs do not fragment */
+                            int pixels = width * height;
+                            int capacity =
+                                queue_capacity > pixels / 2 ? pixels : 2 * queue_capacity;
+                            if ((size_t)capacity > SIZE_MAX / sizeof(*queue)) goto no_memory;
+                            int* grown = malloc((size_t)capacity * sizeof(*queue));
+                            if (!grown) goto no_memory;
+                            size_t first = (size_t)(queue_capacity - head);
+                            memcpy(grown, queue + head, first * sizeof(*queue));
+                            memcpy(grown + first, queue, (size_t)head * sizeof(*queue));
+                            if (queue != queue_storage) free(queue);
+                            queue = grown;
+                            queue_capacity = capacity;
+                            head = 0;
+                            tail = pending;
+                        }
                         visited[n_idx] = frame_number;
-                        queue_x[tail] = nx;
-                        queue_y[tail++] = ny;
+                        total_pixels++;
+                        queue[tail] = n_idx;
+                        tail = (tail + 1) % queue_capacity;
+                        pending++;
                     }
                 }
             }
 
-            if (sum_intensity <= 0.0 || tail > MAX_STAR_PIXELS || count >= max_centroids) continue;
-            starfix_centroid_t* centroid = &centroids[count++];
-            *centroid = (starfix_centroid_t){sum_u / sum_intensity, sum_v / sum_intensity, peak,
-                                             sum_intensity, tail};
-            refine_centroid(image, width, height, peak_x, peak_y, centroid);
+            if (sum_intensity <= 0.0 || total_pixels > MAX_STAR_PIXELS) continue;
+            starfix_centroid_t candidate = {sum_u / sum_intensity, sum_v / sum_intensity, peak,
+                                            sum_intensity, total_pixels};
+            refine_centroid(image, width, height, peak_x, peak_y, &candidate);
+            if (count < max_centroids) {
+                centroids[count++] = candidate;
+            } else {
+                int min_idx = 0;
+                for (int i = 1; i < count; i++) {
+                    if (centroids[i].flux < centroids[min_idx].flux) min_idx = i;
+                }
+                if (candidate.flux > centroids[min_idx].flux) centroids[min_idx] = candidate;
+            }
         }
     }
 
     qsort(centroids, (size_t)count, sizeof(*centroids), compare_centroids);
 
-    if (!visited_mask) {
-        free(visited);
-    } else if (frame_number == 0) {
-        /* remove the temporary sentinel before another generation can use it */
-        memset(visited, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
-    }
+    if (queue != queue_storage) free(queue);
+    if (!visited_mask) free(visited);
     return count;
-}
 
-int starfix_calibrate_hot_pixels(const unsigned char* dark_image, int width, int height,
-                                 unsigned char threshold, int max_hot, int* hot_u, int* hot_v) {
-    if (!dark_image || !hot_u || !hot_v) return STARFIX_ERR_NULL_POINTER;
-    if (width <= 0 || height <= 0 || width > INT_MAX / height || max_hot <= 0)
-        return STARFIX_ERR_INVALID_PARAM;
-
-    int count = 0;
-    for (int v = 0; v < height && count < max_hot; v++) {
-        for (int u = 0; u < width && count < max_hot; u++) {
-            if (dark_image[v * width + u] <= threshold) continue;
-            hot_u[count] = u;
-            hot_v[count++] = v;
-        }
-    }
-    return count;
-}
-
-starfix_status_t starfix_apply_hot_pixel_mask(unsigned char* image, int width, int height,
-                                              int num_hot, const int* hot_u, const int* hot_v) {
-    if (!image || !hot_u || !hot_v) return STARFIX_ERR_NULL_POINTER;
-    if (width <= 0 || height <= 0 || width > INT_MAX / height || num_hot < 0)
-        return STARFIX_ERR_INVALID_PARAM;
-
-    for (int i = 0; i < num_hot; i++) {
-        int u = hot_u[i];
-        int v = hot_v[i];
-        if (u >= 0 && u < width && v >= 0 && v < height) {
-            image[v * width + u] = 0;
-        }
-    }
-    return 0;
+no_memory:
+    if (queue != queue_storage) free(queue);
+    if (!visited_mask) free(visited);
+    return STARFIX_ERR_MEMORY;
 }

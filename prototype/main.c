@@ -9,6 +9,8 @@
 #include "../src/starfix_centroid.h"
 #include "../src/starfix_ekf.h"
 #include "../src/starfix_identify.h"
+#include "../src/starfix_nmea.h"
+#include "../src/starfix_photo.h"
 #include "../src/starfix_solver.h"
 #include "../src/starfix_status.h"
 #include "bno055.h"
@@ -24,15 +26,27 @@
 #define MAX_CENTROIDS 100
 #define MAX_MATCHES 20
 
-/* Pre-allocated memory for starfix algorithms */
+/* pre-allocated memory for starfix algorithms */
 static uint8_t mempool[10 * 1024 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 static uint32_t visited_mask[CAM_WIDTH * CAM_HEIGHT];
 
+/* compute greenwich hour angle of aries in degrees from unix UTC timestamp */
+static double current_gha_aries_utc(double t_now) {
+    double jd = t_now / 86400.0 + 2440587.5;
+    double d_ut1 = jd - 2451545.0;
+    double t = d_ut1 / 36525.0;
+    double gmst =
+        280.46061837 + 360.98564736629 * d_ut1 + 0.000387933 * t * t - (t * t * t) / 38710000.0;
+    gmst = fmod(gmst, 360.0);
+    if (gmst < 0.0) gmst += 360.0;
+    return gmst;
+}
+
 int main(void) {
     printf("StarFix Prototype: IMX462 + BNO055 + Pi Zero W\n");
 
-    /* Initialize hardware */
+    /* initialize hardware */
     if (camera_init(CAMERA_DEV, CAM_WIDTH, CAM_HEIGHT) < 0) {
         printf("Failed to initialize camera on %s\n", CAMERA_DEV);
         return 1;
@@ -43,51 +57,59 @@ int main(void) {
         printf("Failed to initialize BNO055 on %s (trying alt addr)\n", I2C_DEV);
         if (bno055_init(I2C_DEV, BNO055_I2C_ADDR2) < 0) {
             printf("Failed to initialize BNO055 entirely.\n");
+            camera_close();
             return 1;
         }
     }
     printf("BNO055 IMU initialized successfully.\n");
 
-    /* Load StarFix Database */
+    /* load starfix database */
     starfix_db_t db = {0};
 
     printf("Loading StarFix database...\n");
-    if (starfix_load_db("../data/starfix_db.bin", &db) != 0) {
+    if (starfix_load_db("../data/starfix_db.bin", &db) != 0 &&
+        starfix_load_db("data/starfix_db.bin", &db) != 0) {
         printf("Failed to load star database.\n");
+        bno055_close();
+        camera_close();
         return 1;
     }
 
-    /* Propagate precession */
+    /* propagate astrometry to current epoch */
     time_t t_now = time(NULL);
     struct tm* tm_now = gmtime(&t_now);
-    double current_year = 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25);
+    double current_year = tm_now ? 1900.0 + tm_now->tm_year + (tm_now->tm_yday / 365.25) : 2026.0;
     starfix_propagate_astrometry(db.stars, db.num_stars, current_year);
 
-    /* Initialize EKF */
+    /* EKF state initialized on first valid celestial fix */
     starfix_ekf_t ekf;
-    starfix_ekf_init(&ekf, 0.0, 0.0); /* Init at 0,0 for testing */
+    int ekf_initialized = 0;
 
-    double focal_length = starfix_focal_length(CAM_WIDTH, FOV_DEG);
-
-    /* Main run loop */
+    /* main run loop */
     printf("Entering main tracking loop...\n");
     int frame_count = 0;
-    while (frame_count < 10) { /* Run 10 frames for prototype test */
+    while (frame_count < 10) {
         uint8_t* frame_buffer = NULL;
-        if (camera_capture_frame(&frame_buffer) < 0) {
+        double captured_utc;
+        if (camera_capture_frame(&frame_buffer, &captured_utc) < 0) {
             printf("Frame drop.\n");
             continue;
         }
 
-        /* 1. Read IMU Zenith Vector */
-        double gx, gy, gz;
+        /* 1. read IMU zenith vector and compass heading */
+        double gx = 0.0, gy = 0.0, gz = 1.0;
         if (bno055_read_gravity(&gx, &gy, &gz) < 0) {
             printf("IMU read failed.\n");
             continue;
         }
         starfix_vector3_t imu_zenith = {gx, gy, gz};
 
-        /* 2. Find Centroids */
+        double heading_deg = 0.0;
+        if (ekf_initialized && bno055_read_heading(&heading_deg) == 0) {
+            starfix_ekf_predict(&ekf, 0.0, heading_deg, 1.0);
+        }
+
+        /* 2. find centroids */
         starfix_centroid_t centroids[MAX_CENTROIDS];
         int num_centroids =
             starfix_find_centroids(frame_buffer, CAM_WIDTH, CAM_HEIGHT, 45, MAX_CENTROIDS,
@@ -100,7 +122,7 @@ int main(void) {
             continue;
         }
 
-        /* 3. Identify Stars */
+        /* 3. identify stars */
         starfix_match_t matches[MAX_MATCHES];
         int num_matches = starfix_identify_stars(num_centroids, centroids, CAM_WIDTH, CAM_HEIGHT,
                                                  FOV_DEG, &db, MAX_MATCHES, matches, arena, NULL);
@@ -111,40 +133,38 @@ int main(void) {
             continue;
         }
 
-        /* 4. Estimate Attitude */
-        starfix_vector3_t cam_vecs[MAX_MATCHES];
-        starfix_vector3_t cat_vecs[MAX_MATCHES];
-        for (int i = 0; i < num_matches; i++) {
-            int c_idx = matches[i].centroid_idx;
-            int cat_idx = matches[i].catalog_idx;
-
-            cam_vecs[i] = starfix_camera_ray(centroids[c_idx].u - CAM_WIDTH / 2.0,
-                                             centroids[c_idx].v - CAM_HEIGHT / 2.0, focal_length);
-            cat_vecs[i] = starfix_celestial_ray(db.stars[cat_idx].ra, db.stars[cat_idx].dec);
-        }
-
-        double R_est[3][3];
-
-        int inliers =
-            starfix_solve_attitude_ransac(num_matches, cam_vecs, cat_vecs, 0.1, R_est, arena);
-
-        if (inliers < 0) {
-            printf("Frame %d: Attitude solve failed.\n", frame_count);
-            frame_count++;
-            continue;
-        }
-
-        /* 5. Solve Position using IMU Zenith */
-        double solved_lat, solved_lon;
-        double gha_aries = 100.0; /* Mock value for prototype */
-
+        /* 4. solve attitude and position using IMU zenith */
+        starfix_photo_options_t options = {
+            .width = CAM_WIDTH,
+            .height = CAM_HEIGHT,
+            .fov_deg = FOV_DEG,
+            .gha_aries = current_gha_aries_utc(captured_utc),
+            .zenith_camera = imu_zenith,
+        };
+        starfix_photo_result_t result;
         starfix_status_t pos_stat =
-            starfix_solve_position(1, &imu_zenith, R_est, &gha_aries, &solved_lat, &solved_lon);
+            starfix_solve_photo(num_centroids, centroids, db.num_stars, db.stars, num_matches,
+                                matches, &options, &result, arena);
 
         if (pos_stat == STARFIX_SUCCESS) {
-            starfix_ekf_correct(&ekf, solved_lat, solved_lon);
-            printf("Frame %d: Pos FIX [Lat: %.4f, Lon: %.4f] (Inliers: %d)\n", frame_count,
-                   solved_lat, solved_lon, inliers);
+            if (!ekf_initialized) {
+                starfix_ekf_init(&ekf, result.latitude, result.longitude);
+                ekf_initialized = 1;
+            } else {
+                starfix_ekf_correct(&ekf, result.latitude, result.longitude);
+            }
+            printf(
+                "Frame %d: Pos FIX [Lat: %.4f, Lon: %.4f] EKF [Lat: %.4f, Lon: %.4f] "
+                "(Inliers: %u)\n",
+                frame_count, result.latitude, result.longitude, ekf.lat, ekf.lon, result.inliers);
+            char nmea_buf[256];
+            double heading_deg = NAN;
+            if (bno055_read_heading(&heading_deg) < 0) heading_deg = NAN;
+            if (starfix_format_nmea_fix(ekf.lat, ekf.lon, (time_t)captured_utc, 1,
+                                        (int)result.inliers, NAN, heading_deg, nmea_buf,
+                                        sizeof(nmea_buf)) == STARFIX_SUCCESS) {
+                fputs(nmea_buf, stdout);
+            }
         } else {
             printf("Frame %d: Position fix failed.\n", frame_count);
         }
@@ -152,7 +172,8 @@ int main(void) {
         frame_count++;
     }
 
-    /* Cleanup */
+    /* cleanup */
+    bno055_close();
     camera_close();
     starfix_free_db(&db);
 

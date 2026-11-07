@@ -5,6 +5,7 @@
 
 #include "starfix_arena.h"
 #include "starfix_attitude.h"
+#include "starfix_cli_io.h"
 #include "starfix_identify.h"
 #include "starfix_status.h"
 
@@ -14,6 +15,109 @@ static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+static int test_catalog_record_formats(void) {
+    const char* path = "/tmp/starfix_coordinate_formats.bin";
+    unsigned char bytes[40] = {
+        [0] = 'S', [1] = 'F',   [2] = 'I',   [3] = 'X',
+        [4] = 1,   [8] = 1,     [12] = 50, /* one star, one hash entry */
+        [16] = 42, [21] = 0x80, [23] = 0x80, [24] = 128,
+    };
+    const unsigned char formats[] = {0, 1, 1, 2, 0};
+    const unsigned char ra_lows[] = {0, 0, 52, 0, 52};
+    const unsigned char dec_lows[] = {0, 0, 86, 0, 86};
+    int passed = 1;
+    for (size_t i = 0; i < sizeof(formats); i++) {
+        bytes[25] = ra_lows[i];
+        bytes[26] = dec_lows[i];
+        bytes[27] = formats[i];
+        FILE* file = fopen(path, "wb");
+        if (!file) return 0;
+        int written = fwrite(bytes, 1, sizeof(bytes), file) == sizeof(bytes);
+        if (fclose(file) != 0) written = 0;
+        if (!written) {
+            remove(path);
+            return 0;
+        }
+        starfix_db_t loaded = {0};
+        int status = starfix_load_db(path, &loaded);
+        if (i < 3) {
+            double ra = i == 0 ? 32768.0 * (2.0 * M_PI) / 65535.0
+                               : (8388608.0 + ra_lows[i]) * (2.0 * M_PI) / 16777215.0;
+            double dec = i == 0 ? 32768.0 * M_PI / 65535.0 - M_PI / 2.0
+                                : (8388608.0 + dec_lows[i]) * M_PI / 16777215.0 - M_PI / 2.0;
+            if (status != STARFIX_SUCCESS || loaded.num_stars != 1 ||
+                fabs(loaded.stars[0].ra0 - ra) > 1e-14 || fabs(loaded.stars[0].dec0 - dec) > 1e-14)
+                passed = 0;
+        } else if (status != STARFIX_ERR_DATA_CORRUPTION || loaded.stars || loaded.hashes ||
+                   loaded.num_stars || loaded.num_hashes || loaded.bins) {
+            passed = 0;
+        }
+        starfix_free_db(&loaded);
+    }
+    remove(path);
+    return passed;
+}
+
+static int identify_synthetic_field(const double x_deg[5], const double y_deg[5],
+                                    const double dx_deg[5], const double dy_deg[5]) {
+    const double focal = starfix_focal_length(1024.0, 24.0);
+    starfix_vector3_t vectors[5];
+    starfix_catalog_star_t catalog[5] = {{0}};
+    starfix_centroid_t centroids[5] = {{0}};
+    for (int i = 0; i < 5; i++) {
+        double x = x_deg[i] * M_PI / 180.0, y = y_deg[i] * M_PI / 180.0;
+        vectors[i] = (starfix_vector3_t){sin(x) * cos(y), sin(y), cos(x) * cos(y)};
+        catalog[i].ra = atan2(vectors[i].y, vectors[i].x);
+        catalog[i].dec = asin(vectors[i].z);
+        /* Reflection across an almost straight star pattern is a small perturbation;
+         * for a genuinely two-dimensional field it cannot fit a proper rotation. */
+        double observed_x = x + dx_deg[i] * M_PI / 180.0;
+        double observed_y = -y + dy_deg[i] * M_PI / 180.0;
+        double z = cos(observed_x) * cos(observed_y);
+        centroids[i].u = 512.0 + focal * sin(observed_x) * cos(observed_y) / z;
+        centroids[i].v = 512.0 + focal * sin(observed_y) / z;
+        centroids[i].flux = 100.0 - i;
+    }
+
+    starfix_hash_entry_t hashes[5] = {{0}};
+    for (int omitted = 0; omitted < 5; omitted++) {
+        starfix_hash_entry_t* entry = &hashes[omitted];
+        int at = 0;
+        for (int i = 0; i < 5; i++)
+            if (i != omitted) entry->stars[at++] = (uint16_t)i;
+        double angles[6];
+        at = 0;
+        for (int a = 0; a < 3; a++) {
+            for (int b = a + 1; b < 4; b++) {
+                double dot = starfix_dot(vectors[entry->stars[a]], vectors[entry->stars[b]]);
+                angles[at++] = acos(fmax(-1.0, fmin(1.0, dot)));
+            }
+        }
+        for (int a = 1; a < 6; a++) {
+            for (int b = a; b > 0 && angles[b] < angles[b - 1]; b--) {
+                double swap = angles[b];
+                angles[b] = angles[b - 1];
+                angles[b - 1] = swap;
+            }
+        }
+        for (int i = 0; i < 5; i++)
+            entry->hash_key |= (uint32_t)(angles[i] / angles[5] * 63.0) << (6 * i);
+    }
+    for (int a = 1; a < 5; a++) {
+        for (int b = a; b > 0 && hashes[b].hash_key < hashes[b - 1].hash_key; b--) {
+            starfix_hash_entry_t swap = hashes[b];
+            hashes[b] = hashes[b - 1];
+            hashes[b - 1] = swap;
+        }
+    }
+    starfix_db_t db = {catalog, hashes, 5, 5, 63};
+    starfix_match_t matches[5];
+    int count = starfix_identify_stars(5, centroids, 1024, 1024, 24, &db, 5, matches, arena, NULL);
+    for (int i = 0; i < count; i++)
+        if (matches[i].centroid_idx != matches[i].catalog_idx) return 0;
+    return count;
+}
 
 int main(void) {
     int failures = 0;
@@ -46,7 +150,7 @@ int main(void) {
         return -1;
     }
 
-    /* 2b. Corrupt database indices must be rejected before catalog access. */
+    /* 2b. corrupt database indices must be rejected before catalog access */
     printf("Test 2b: Rejecting corrupt database indices... ");
     const char* corrupt_path = "/tmp/starfix_corrupt_db.bin";
     unsigned char corrupt_db[40] = {
@@ -78,69 +182,42 @@ int main(void) {
         starfix_free_db(&corrupt);
     }
 
+    printf("Test 2c: Tagged 24-bit and legacy 16-bit coordinates... ");
+    if (test_catalog_record_formats()) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED\n");
+    }
+
+    printf("Test 2d: Noisy near-collinear seeds and mirrored fields... ");
+    const double near_x[5] = {-10, -4.5, 0.3, 5.5, 10};
+    const double near_y[5] = {0.04, -0.04, 0.03, -0.03, 0.02};
+    const double dx[5] = {0.003, -0.002, 0.004, -0.004, 0.001};
+    const double dy[5] = {0.004, -0.006, 0.007, 0.001, -0.003};
+    const double wide_x[5] = {-8, -3, 1, 5, 9};
+    const double wide_y[5] = {-5, 6, -3, 4, -1};
+    int near_status = identify_synthetic_field(near_x, near_y, dx, dy);
+    int mirror_status = identify_synthetic_field(wide_x, wide_y, dx, dy);
+    if (near_status == 5 && mirror_status == STARFIX_ERR_IDENTIFY_NO_MATCH) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED (near-collinear=%d, mirrored=%d)\n", near_status, mirror_status);
+    }
+
     /* 3. Lost-in-Space Star Identification */
     printf("Test 3: Lost-in-Space Star Identification... ");
 
-    /* Parse mock centroids from data/mock_centroids.json using simple string parsing */
-    FILE* f = fopen("data/mock_centroids.json", "r");
-    if (f == NULL) {
-        failures++;
-        printf("FAILED (cannot open data/mock_centroids.json)\n");
-        starfix_free_db(&db);
-        return -1;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc((size_t)sz + 1);
-    if (buf == NULL) {
-        fclose(f);
-        starfix_free_db(&db);
-        return -1;
-    }
-    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
-        free(buf);
-        fclose(f);
-        starfix_free_db(&db);
-        return -1;
-    }
-    buf[sz] = '\0';
-    fclose(f);
-
     starfix_centroid_t centroids[50];
-    int count = 0;
-    char* obj_start = buf;
-    while (count < 50) {
-        obj_start = strchr(obj_start, '{');
-        if (!obj_start) break;
-        char* obj_end = strchr(obj_start, '}');
-        if (!obj_end) break;
-
-        double u = -1.0;
-        double v = -1.0;
-
-        char* u_ptr = strstr(obj_start, "\"u_true\"");
-        if (u_ptr && u_ptr < obj_end) {
-            char* p_val = strchr(u_ptr, ':');
-            if (p_val) u = atof(p_val + 1);
-        }
-
-        char* v_ptr = strstr(obj_start, "\"v_true\"");
-        if (v_ptr && v_ptr < obj_end) {
-            char* p_val = strchr(v_ptr, ':');
-            if (p_val) v = atof(p_val + 1);
-        }
-
-        if (u >= 0.0 && v >= 0.0) {
-            centroids[count].u = u;
-            centroids[count].v = v;
-            centroids[count].flux = 1000.0 - count * 10.0;
-            count++;
-        }
-        obj_start = obj_end + 1;
+    int count = read_centroids_json("data/mock_centroids.json", centroids, 50);
+    if (count < 0) {
+        failures++;
+        printf("FAILED (cannot read data/mock_centroids.json)\n");
+        starfix_free_db(&db);
+        return -1;
     }
-    free(buf);
+    for (int i = 0; i < count; i++) centroids[i].flux = 1000.0 - i * 10.0;
 
     printf("  Parsed %d mock centroids\n", count);
     int di;

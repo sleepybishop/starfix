@@ -43,7 +43,7 @@ use Test::More;
     ok($output =~ /Test 2: Black image.*Passed/, "Centroid Test 2 (thresholding) passed");
     ok($output =~ /Test 3: Happy path multi-star detection.*Passed/, "Centroid Test 3 (weighted center of mass) passed");
     ok($output =~ /Test 4: Giant saturated blob rejection.*Passed/, "Centroid Test 4 (component size filter) passed");
-    ok($output =~ /Test 5: Hot pixel calibration and masking.*Passed/, "Centroid Test 5 (hot-pixel masking) passed");
+    ok($output =~ /Test 5: Top-N brightest selection.*Passed/, "Centroid Test 5 (brightest selection) passed");
     ok($output =~ /Test 6: Generation-zero mask handling.*Passed/, "Centroid Test 6 (generation wrap) passed");
 }
 
@@ -57,7 +57,7 @@ use Test::More;
     ok($output =~ /Test 3: Collinear degenerate vectors.*Passed/, "Attitude Test 3 (degenerate inputs) passed");
     ok($output =~ /Test 4: RANSAC outlier rejection.*Passed/, "Attitude Test 4 (RANSAC) passed");
     ok($output =~ /Test 5: Atmospheric Refraction Correction.*Passed/, "Attitude Test 5 (refraction) passed");
-    ok($output =~ /Test 6: Stellar Aberration Correction.*Passed/, "Attitude Test 6 (stellar aberration correction) passed");
+    ok($output =~ /Test 6: Degenerate RANSAC rejection.*Passed/, "Attitude Test 6 (degenerate RANSAC rejection) passed");
 }
 
 # Test 5: Factor Graph Optimization (batch Gauss-Newton)
@@ -84,6 +84,14 @@ use Test::More;
     ok($output =~ /Test 3b: Tracking Mode with Attitude Hint.*Passed/s, "Star ID Test 4 (tracking mode with attitude hint) passed");
     ok($output =~ /Test 3c: Blind fallback and output bounds.*Passed/s, "Star ID blind fallback, capacity, and independent-star checks passed");
     ok($output =~ /Test 4: Stellar Precession Propagation.*Passed/s, "Star ID Test 5 (astrometry propagation) passed");
+}
+
+# Test 7: Prototype REQUIEM-SOPAC Passage Simulator
+{
+    my $output = `./prototype/starfix_prototype_sim 2>&1`;
+    ok($? == 0, "Prototype simulator returned success") or diag($output);
+    ok($output =~ /Saved Marquesas TSV  : prototype\/bodega_to_marquesas\.tsv/, "Bodega Bay to Marquesas TSV written");
+    ok(-s "prototype/bodega_to_marquesas.tsv", "bodega_to_marquesas.tsv is non-empty");
 }
 
 done_testing();

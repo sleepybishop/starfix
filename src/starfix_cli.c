@@ -20,12 +20,6 @@ static int numeric_argument(const char* text, const char* end) {
     return 0;
 }
 
-static double current_year(void) {
-    time_t now = time(NULL);
-    struct tm* utc = gmtime(&now);
-    return utc ? 1900.0 + utc->tm_year + utc->tm_yday / 365.25 : NAN;
-}
-
 static int load_catalog(starfix_db_t* db, double year) {
     if (!isfinite(year)) return STARFIX_ERR_INVALID_PARAM;
     int status = starfix_load_db("data/starfix_db.bin", db);
@@ -111,6 +105,28 @@ done:
     return result;
 }
 
+static void print_solution(const starfix_photo_result_t* fitted, int attitude_only) {
+    const double (*R)[3] = (const double (*)[3])fitted->rotation;
+    printf("RMS_ERROR: %.9f pixels\n", fitted->rms_pixels);
+    printf("INLIERS: %u/%d\n", fitted->inliers, fitted->matches);
+
+    double ra_deg, dec_deg, roll_deg;
+    starfix_rotation_to_euler(R, &ra_deg, &dec_deg, &roll_deg);
+
+    printf("\nEstimated Attitude:\n");
+    printf("  Right Ascension : %.4f degrees\n", ra_deg);
+    printf("  Declination     : %.4f degrees\n", dec_deg);
+    printf("  Roll            : %.4f degrees\n", roll_deg);
+    printf("ROTATION_MATRIX: %.12f %.12f %.12f %.12f %.12f %.12f %.12f %.12f %.12f\n", R[0][0],
+           R[0][1], R[0][2], R[1][0], R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]);
+
+    if (!attitude_only) {
+        printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
+        printf("  Solved Latitude  : %f degrees North\n", fitted->latitude);
+        printf("  Solved Longitude : %f degrees East\n", fitted->longitude);
+    }
+}
+
 static int do_solve_photo(const starfix_photo_options_t* options, double year, int attitude_only) {
     starfix_db_t db = {0};
     int result = 1;
@@ -146,25 +162,111 @@ static int do_solve_photo(const starfix_photo_options_t* options, double year, i
         fprintf(stderr, "Photo solution failed quality or input checks (status %d)\n", status);
         goto done;
     }
-    const double (*R)[3] = (const double (*)[3])fitted.rotation;
-    printf("RMS_ERROR: %.9f pixels\n", fitted.rms_pixels);
-    printf("INLIERS: %u/%d\n", fitted.inliers, fitted.matches);
+    print_solution(&fitted, attitude_only);
+    result = 0;
+done:
+    starfix_free_db(&db);
+    return result;
+}
 
-    double ra_deg, dec_deg, roll_deg;
-    starfix_rotation_to_euler(R, &ra_deg, &dec_deg, &roll_deg);
+static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
+    starfix_db_t db = {0};
+    int result = 1;
+    if (load_catalog(&db, year) != 0) goto done;
 
-    printf("\nEstimated Attitude:\n");
-    printf("  Right Ascension : %.4f degrees\n", ra_deg);
-    printf("  Declination     : %.4f degrees\n", dec_deg);
-    printf("  Roll            : %.4f degrees\n", roll_deg);
-    printf("ROTATION_MATRIX: %.12f %.12f %.12f %.12f %.12f %.12f %.12f %.12f %.12f\n", R[0][0],
-           R[0][1], R[0][2], R[1][0], R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]);
+    starfix_centroid_t centroids[1000];
+    int cent_count = read_centroids_json("data/detected_centroids.json", centroids, 1000);
+    if (cent_count == -1)
+        cent_count = read_centroids_json("../data/detected_centroids.json", centroids, 1000);
+    if (cent_count < 5) goto done;
 
-    if (!attitude_only) {
-        printf("\n>>> CELESTIAL POSITION SOLVED! <<<\n");
-        printf("  Solved Latitude  : %f degrees North\n", fitted.latitude);
-        printf("  Solved Longitude : %f degrees East\n", fitted.longitude);
+    double low_search = fmax(2.0, base->fov_deg * 0.75);
+    double high_search = fmin(90.0, base->fov_deg * 1.25);
+    double step = (high_search - low_search) / 40.0;
+
+    starfix_match_t best_matches[20];
+    int best_match_count = 0;
+    starfix_photo_result_t best_fit = {0};
+    double best_fov = base->fov_deg;
+    starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
+
+    for (int i = 0; i <= 40; i++) {
+        starfix_photo_options_t opt = *base;
+        opt.fov_deg = low_search + i * step;
+        starfix_match_t matches[20];
+        int match_count = starfix_identify_stars(cent_count, centroids, opt.width, opt.height,
+                                                 opt.fov_deg, &db, 20, matches, arena, NULL);
+        if (match_count < 3) continue;
+        starfix_photo_result_t fit;
+        if (starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars, match_count, matches,
+                                &opt, &fit, arena) != STARFIX_SUCCESS)
+            continue;
+        if (best_match_count == 0 || fit.inliers > best_fit.inliers ||
+            (fit.inliers == best_fit.inliers && fit.rms_pixels < best_fit.rms_pixels)) {
+            best_fit = fit;
+            best_fov = opt.fov_deg;
+            best_match_count = match_count;
+            memcpy(best_matches, matches, (size_t)match_count * sizeof(*matches));
+        }
     }
+    if (best_match_count == 0) goto done;
+
+    double half_width = fmax(step, best_fov * 0.025);
+    double low = fmax(1.0, best_fov - half_width);
+    double high = fmin(100.0, best_fov + half_width);
+    double ratio = (sqrt(5.0) - 1.0) / 2.0;
+    double x1 = high - ratio * (high - low);
+    double x2 = low + ratio * (high - low);
+    starfix_photo_result_t fit1 = {0}, fit2 = {0};
+    starfix_photo_options_t opt1 = *base, opt2 = *base;
+    opt1.fov_deg = x1;
+    opt2.fov_deg = x2;
+    double rms1 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
+                                      best_match_count, best_matches, &opt1, &fit1, arena) == 0
+                      ? fit1.rms_pixels
+                      : HUGE_VAL;
+    double rms2 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
+                                      best_match_count, best_matches, &opt2, &fit2, arena) == 0
+                      ? fit2.rms_pixels
+                      : HUGE_VAL;
+    for (int iter = 0; iter < 18; iter++) {
+        if (rms1 <= rms2) {
+            high = x2;
+            x2 = x1;
+            fit2 = fit1;
+            rms2 = rms1;
+            x1 = high - ratio * (high - low);
+            opt1.fov_deg = x1;
+            rms1 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
+                                       best_match_count, best_matches, &opt1, &fit1, arena) == 0
+                       ? fit1.rms_pixels
+                       : HUGE_VAL;
+        } else {
+            low = x1;
+            x1 = x2;
+            fit1 = fit2;
+            rms1 = rms2;
+            x2 = low + ratio * (high - low);
+            opt2.fov_deg = x2;
+            rms2 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
+                                       best_match_count, best_matches, &opt2, &fit2, arena) == 0
+                       ? fit2.rms_pixels
+                       : HUGE_VAL;
+        }
+    }
+    if (rms1 < best_fit.rms_pixels) {
+        best_fit = fit1;
+        best_fov = x1;
+    }
+    if (rms2 < best_fit.rms_pixels) {
+        best_fit = fit2;
+        best_fov = x2;
+    }
+    if (write_identified_json("data/identified_stars.json", best_matches, best_match_count,
+                              db.stars) < 0)
+        goto done;
+    printf("SOLVED_FOV: %.9f\n", best_fov);
+    print_solution(&best_fit, 1);
     result = 0;
 done:
     starfix_free_db(&db);
@@ -202,22 +304,24 @@ int main(int argc, char** argv) {
             return 1;
         }
         int w = 1024, h = 1024;
-        double fov = 12.0, observation_year = current_year();
+        double fov = 12.0, observation_year = current_year_utc();
         if ((argc >= 3 && !numeric_argument(argv[2], parse_int(argv[2], 1, INT_MAX, &w))) ||
             (argc >= 4 && !numeric_argument(argv[3], parse_int(argv[3], 1, INT_MAX, &h))) ||
             (argc >= 5 && !numeric_argument(argv[4], parse_double(argv[4], &fov))) ||
             (argc >= 6 && !numeric_argument(argv[5], parse_double(argv[5], &observation_year))))
             return 1;
         return do_identify(w, h, fov, observation_year);
-    } else if (strcmp(argv[1], "--solve-photo") == 0 || strcmp(argv[1], "--fit-photo") == 0) {
-        int attitude_only = strcmp(argv[1], "--fit-photo") == 0;
+    } else if (strcmp(argv[1], "--solve-photo") == 0 || strcmp(argv[1], "--fit-photo") == 0 ||
+               strcmp(argv[1], "--sweep-photo") == 0) {
+        int sweep = strcmp(argv[1], "--sweep-photo") == 0;
+        int attitude_only = sweep || strcmp(argv[1], "--fit-photo") == 0;
         int first = attitude_only ? 2 : 3;
         if (argc < first + 3 || argc > first + 6) {
             printf("Usage: %s %s %s<g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size]\n",
                    argv[0], argv[1], attitude_only ? "" : "<gha_aries> ");
             return 1;
         }
-        double year = current_year();
+        double year = current_year_utc();
         starfix_photo_options_t options = {.width = 560.0, .fov_deg = 11.28};
         double* fields[] = {&options.gha_aries,
                             &options.zenith_camera.x,
@@ -230,7 +334,8 @@ int main(int argc, char** argv) {
         for (int i = 2; i < argc; i++)
             if (!numeric_argument(argv[i], parse_double(argv[i], fields[i - 2 + offset]))) return 1;
         options.height = options.width;
-        return do_solve_photo(&options, year, attitude_only);
+        return sweep ? do_sweep_photo(&options, year)
+                     : do_solve_photo(&options, year, attitude_only);
     } else {
         printf("Invalid option: %s\n", argv[1]);
         return 1;

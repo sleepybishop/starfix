@@ -25,6 +25,8 @@ TODO.md
 *evaluation.md
 *.o
 starfix_prototype
+starfix_prototype_sim
+prototype/test_camera
 starfix_cli
 t/test_*
 !t/test_*.py

@@ -16,6 +16,13 @@ extern "C" {
 starfix_status_t starfix_format_nmea(double lat_deg, double lon_deg, time_t time_utc,
                                      char* out_buffer, size_t out_size);
 
+/* format GPGGA/GPRMC with explicit fix quality (1 = star fix, 6 = dead reckoning),
+ * matched star count (0..99), and optional speed (knots) / course (degrees true);
+ * pass NAN for speed_knots or course_deg when unavailable to omit those fields */
+starfix_status_t starfix_format_nmea_fix(double lat_deg, double lon_deg, time_t time_utc,
+                                         int fix_quality, int num_stars, double speed_knots,
+                                         double course_deg, char* out_buffer, size_t out_size);
+
 #ifdef __cplusplus
 }
 #endif

@@ -12,51 +12,40 @@
 
 double starfix_year_to_mjd(double year) { return J2000 + (year - 2000.0) * 365.25; }
 
-/* dir < 0 precesses to J2000; dir > 0 precesses from J2000 */
-static void do_precess(double equinox, double* alpha, double* delta, int dir) {
-    double T;
-    double zeta_A, z_A, theta_A;
-    double A, B, C;
+static void precession_matrix(double equinox, double P[3][3]) {
+    if (fabs(equinox - J2000) < 1.0) {
+        P[0][0] = P[1][1] = P[2][2] = 1.0;
+        P[0][1] = P[0][2] = P[1][0] = P[1][2] = P[2][0] = P[2][1] = 0.0;
+        return;
+    }
 
-    /* a one-day cutoff keeps precession error below 0.1 arcsec */
-    double threshhold = 1;
-
-    if (fabs(equinox - J2000) < threshhold) return;
-
-    T = (equinox - J2000) / 36525.0;
-
+    double T = (equinox - J2000) / 36525.0;
     /* coefficients: USNO/HMNAO, rutherford appleton laboratory, ISSN 0737-6421 */
-
-    zeta_A = arcsecrad(
+    double zeta_A = arcsecrad(
         2.650545 +
         T * (2306.083227 + T * (0.2988499 + T * (0.01801828 + T * (-5.971e-6 - 3.173e-7 * T)))));
-    z_A = arcsecrad(
+    double z_A = arcsecrad(
         -2.650545 +
         T * (2306.077181 + T * (1.0927348 + T * (0.01826837 + T * (-28.596e-6 - 2.904e-7 * T)))));
-    theta_A = arcsecrad(
+    double theta_A = arcsecrad(
         T * (2004.191903 - T * (0.4294934 + T * (0.04182264 + T * (7.089e-6 + 1.274e-7 * T)))));
 
-    if (dir < 0) {
-        A = sin(*alpha - z_A) * cos(*delta);
-        B = cos(*alpha - z_A) * cos(theta_A) * cos(*delta) + sin(theta_A) * sin(*delta);
-        C = -cos(*alpha - z_A) * sin(theta_A) * cos(*delta) + cos(theta_A) * sin(*delta);
-        *alpha = atan2(A, B) - zeta_A;
-    } else {
-        A = sin(*alpha + zeta_A) * cos(*delta);
-        B = cos(*alpha + zeta_A) * cos(theta_A) * cos(*delta) - sin(theta_A) * sin(*delta);
-        C = cos(*alpha + zeta_A) * sin(theta_A) * cos(*delta) + cos(theta_A) * sin(*delta);
-        *alpha = atan2(A, B) + z_A;
-    }
-    while (*alpha < 0.0) {
-        *alpha += TWOPI;
-    }
-    while (*alpha >= TWOPI) {
-        *alpha -= TWOPI;
-    }
-    *delta = asin(C);
-}
+    double cz = cos(zeta_A), sz = sin(zeta_A);
+    double cza = cos(z_A), sza = sin(z_A);
+    double ct = cos(theta_A), st = sin(theta_A);
 
-void starfix_precess(double to_mjd, double* ra, double* dec) { do_precess(to_mjd, ra, dec, 1); }
+    P[0][0] = cz * ct * cza - sz * sza;
+    P[0][1] = -sz * ct * cza - cz * sza;
+    P[0][2] = -st * cza;
+
+    P[1][0] = cz * ct * sza + sz * cza;
+    P[1][1] = -sz * ct * sza + cz * cza;
+    P[1][2] = -st * sza;
+
+    P[2][0] = cz * st;
+    P[2][1] = -sz * st;
+    P[2][2] = ct;
+}
 static void obliquity(double mj, double* eps) {
     double t = (mj - J2000) / 36525.0;
     *eps = degrad(23.4392911 + t * (-46.8150 + t * (-0.00059 + t * (0.001813))) / 3600.0);
@@ -143,17 +132,10 @@ static short ampconst[NUT_SERIES][2] = {
 
 /* compute nutation in obliquity (deps) and longitude (dpsi), in radians */
 static void nutation(double mj, double* deps, double* dpsi) {
-    static double lastmj = -10000, lastdeps, lastdpsi;
     double T, T2, T3, T10; /* jul cent since J2000 */
     int i, isecul;         /* index in term table */
-    static double delcache[5][2 * NUT_MAXMUL + 1];
+    double delcache[5][2 * NUT_MAXMUL + 1];
     /* delaunay multiples in radians, indexed by multiple + NUT_MAXMUL */
-
-    if (fabs(mj - lastmj) < 1e-9) {
-        *deps = lastdeps;
-        *dpsi = lastdpsi;
-        return;
-    }
 
     T = (mj - J2000) / 36525.;
     T2 = T * T;
@@ -177,7 +159,7 @@ static void nutation(double mj, double* deps, double* dpsi) {
     }
 
     /* find dpsi and deps */
-    lastdpsi = lastdeps = 0.;
+    double sum_dpsi = 0., sum_deps = 0.;
     for (i = isecul = 0; i < NUT_SERIES; ++i) {
         double arg = 0., ampsin, ampcos;
         short j;
@@ -195,93 +177,50 @@ static void nutation(double mj, double* deps, double* dpsi) {
 
         for (j = 0; j < 5; ++j) arg += delcache[j][NUT_MAXMUL + multarg[i][j]];
 
-        lastdpsi += ampsin * sin(arg);
+        sum_dpsi += ampsin * sin(arg);
 
-        lastdeps += ampcos * cos(arg);
+        sum_deps += ampcos * cos(arg);
     }
 
-    lastdpsi = degrad(lastdpsi / 3600. / NUT_SCALE);
-    lastdeps = degrad(lastdeps / 3600. / NUT_SCALE);
-
-    lastmj = mj;
-    *deps = lastdeps;
-    *dpsi = lastdpsi;
+    *dpsi = degrad(sum_dpsi / 3600. / NUT_SCALE);
+    *deps = degrad(sum_deps / 3600. / NUT_SCALE);
 }
 
-void starfix_nutation(double mj, double* ra, double* dec) {
-    static double lastmj = -10000;
-    static double a[3][3]; /* rotation matrix */
-    double xold, yold, zold, x, y, z;
+void starfix_astrometry_frame(double mj, double P[3][3], double aberration[3]) {
+    double prec[3][3], nut[3][3];
+    double epsilon, dpsi, deps;
 
-    if (fabs(mj - lastmj) > 1e-9) {
-        double epsilon, dpsi, deps;
-        double se, ce, sp, cp, sede, cede;
+    precession_matrix(mj, prec);
+    obliquity(mj, &epsilon);
+    nutation(mj, &deps, &dpsi);
 
-        obliquity(mj, &epsilon);
-        nutation(mj, &deps, &dpsi);
+    double se = sin(epsilon), ce = cos(epsilon);
+    double sp = sin(dpsi), cp = cos(dpsi);
+    double sede = sin(epsilon + deps), cede = cos(epsilon + deps);
 
-        /* nutation: equatorial -> ecliptic -> shift longitude -> corrected equatorial */
+    nut[0][0] = cp;
+    nut[0][1] = -sp * ce;
+    nut[0][2] = -sp * se;
 
-        se = sin(epsilon);
-        ce = cos(epsilon);
-        sp = sin(dpsi);
-        cp = cos(dpsi);
-        sede = sin(epsilon + deps);
-        cede = cos(epsilon + deps);
+    nut[1][0] = cede * sp;
+    nut[1][1] = cede * cp * ce + sede * se;
+    nut[1][2] = cede * cp * se - sede * ce;
 
-        a[0][0] = cp;
-        a[0][1] = -sp * ce;
-        a[0][2] = -sp * se;
+    nut[2][0] = sede * sp;
+    nut[2][1] = sede * cp * ce - cede * se;
+    nut[2][2] = sede * cp * se + cede * ce;
 
-        a[1][0] = cede * sp;
-        a[1][1] = cede * cp * ce + sede * se;
-        a[1][2] = cede * cp * se - sede * ce;
-
-        a[2][0] = sede * sp;
-        a[2][1] = sede * cp * ce - cede * se;
-        a[2][2] = sede * cp * se + cede * ce;
-
-        lastmj = mj;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            P[i][j] = nut[i][0] * prec[0][j] + nut[i][1] * prec[1][j] + nut[i][2] * prec[2][j];
+        }
     }
 
-    double cd = cos(*dec);
-    xold = cos(*ra) * cd;
-    yold = sin(*ra) * cd;
-    zold = sin(*dec);
-    x = a[0][0] * xold + a[0][1] * yold + a[0][2] * zold;
-    y = a[1][0] * xold + a[1][1] * yold + a[1][2] * zold;
-    z = a[2][0] * xold + a[2][1] * yold + a[2][2] * zold;
-    double r = sqrt(x * x + y * y + z * z);
-    *dec = asin(z / r);
-    *ra = atan2(y, x);            /* radius should be 1.0 */
-    if (*ra < 0.) *ra += 2. * PI; /* make positive for display */
-}
-
-void starfix_aberration(double mj, double* ra, double* dec) {
-    double x, y, z;
-    double vx, vy, vz;
-    double L;
-    double cL;
-    double r;
-
-    double cd = cos(*dec);
-    x = cos(*ra) * cd;
-    y = sin(*ra) * cd;
-    z = sin(*dec);
-
-    L = TWOPI * (0.27908 + 100.00214 * (mj - J2000) / 36525.0);
-    cL = cos(L);
-    vx = -0.994e-4 * sin(L);
-    vy = 0.912e-4 * cL;
-    vz = 0.395e-4 * cL;
-    x += vx;
-    y += vy;
-    z += vz;
-
-    r = sqrt(x * x + y * y + z * z);
-    *dec = asin(z / r);
-    *ra = atan2(y, x);
-    if (*ra < 0) *ra += TWOPI;
+    double L = TWOPI * (0.27908 + 100.00214 * (mj - J2000) / 36525.0);
+    double cL = cos(L);
+    aberration[0] = -0.994e-4 * sin(L);
+    aberration[1] = 0.912e-4 * cL;
+    aberration[2] = 0.395e-4 * cL;
 }
 
 static void unrefractLT15(double pr, double tr, double aa, double* ta);
@@ -324,35 +263,4 @@ static void unrefractLT15(double pr, double tr, double aa, double* ta) {
     r = degrad(a / b);
 
     *ta = (aa < 0 && r < 0) ? aa : aa - r; /* 0 below ~5 degs */
-}
-
-/* invert unrefract by secant iteration; radians, mbar, celsius */
-void starfix_refract(double pr, double tr, double ta, double* aa) {
-#define MAXRERR degrad(0.1 / 3600.) /* desired accuracy, rads */
-
-    double d, t, t0, a;
-
-    if (isnan(ta)) {
-        *aa = ta;
-        return;
-    }
-
-    /* seed the apparent altitude by reversing the refraction correction */
-    starfix_unrefract(pr, tr, ta, &t);
-    d = 0.8 * (ta - t);
-    t0 = t;
-    a = ta;
-
-    /* secant iteration finds an apparent altitude that unrefracts to ta */
-    while (1) {
-        a += d;
-        starfix_unrefract(pr, tr, a, &t);
-        if (fabs(ta - t) <= MAXRERR) break;
-        d *= -(ta - t) / (t0 - t);
-        t0 = t;
-    }
-
-    *aa = a;
-
-#undef MAXRERR
 }

@@ -165,6 +165,21 @@ int main(void) {
     free(large_odom);
     free(large_poses);
 
+    printf("Test 4: Antimeridian crossing with wrapped fix... ");
+    starfix_odometry_t cross_odom = {.speed = 60.0, .heading = 90.0};
+    starfix_fix_t cross_fix = {.node_idx = 1, .lat = 0.0, .lon = -179.5};
+    starfix_pose_t cross_poses[2];
+    double cross_scale = 1.0, cross_bias = 0.0;
+    int cross_status = starfix_solve_graph(1, 1, 3600.0, 0.0, 179.5, &cross_odom, 1, &cross_fix,
+                                           cross_poses, &cross_scale, &cross_bias, arena);
+    if (cross_status == STARFIX_SUCCESS && fabs(cross_poses[1].lat) < 1e-3 &&
+        fabs(cross_poses[1].lon + 179.5) < 1e-3) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED (status=%d, lon=%f)\n", cross_status, cross_poses[1].lon);
+    }
+
     free(odom);
     free(poses);
     free(fixes);

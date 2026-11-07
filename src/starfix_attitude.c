@@ -147,6 +147,7 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
             max_idx = i;
         }
     }
+    if (eigenvalues[max_idx] <= 1e-9) return STARFIX_ERR_ATTITUDE_DEGENERATE;
 
     double q0 = V_eig[0][max_idx];
     double q1 = V_eig[1][max_idx];
@@ -154,12 +155,11 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
     double q3 = V_eig[3][max_idx];
 
     double q_norm = sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-    if (q_norm > 1e-12) {
-        q0 /= q_norm;
-        q1 /= q_norm;
-        q2 /= q_norm;
-        q3 /= q_norm;
-    }
+    if (q_norm <= 1e-12) return STARFIX_ERR_ATTITUDE_DEGENERATE;
+    q0 /= q_norm;
+    q1 /= q_norm;
+    q2 /= q_norm;
+    q3 /= q_norm;
 
     R_est[0][0] = 1.0 - 2.0 * (q2 * q2 + q3 * q3);
     R_est[0][1] = 2.0 * (q1 * q2 - q0 * q3);
@@ -174,6 +174,13 @@ starfix_status_t starfix_solve_attitude(int num_stars, const starfix_vector3_t* 
     R_est[2][2] = 1.0 - 2.0 * (q1 * q1 + q2 * q2);
 
     return STARFIX_SUCCESS;
+}
+
+static uint32_t consensus_random(uint32_t* state) {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    return *state;
 }
 
 int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
@@ -194,12 +201,12 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
             return STARFIX_ERR_DATA_CORRUPTION;
     }
 
-    /* Convert threshold to cosine value to avoid calling acos() inside the loop */
+    /* convert threshold to cosine value to avoid calling acos() inside the loop */
     double threshold_rad = threshold_deg * M_PI / 180.0;
     double cos_threshold = cos(threshold_rad);
 
-    int max_iterations = 20;
     int best_inlier_count = 0;
+    double best_score = -HUGE_VAL;
     int* best_inliers = starfix_alloc_array(&arena, int, (size_t)num_stars);
     int* current_inliers = starfix_alloc_array(&arena, int, (size_t)num_stars);
 
@@ -210,60 +217,68 @@ int starfix_solve_attitude_ransac(int num_stars, const starfix_vector3_t* w,
     starfix_vector3_t w_sample[2];
     starfix_vector3_t v_sample[2];
     double R_tmp[3][3];
+    int limit = num_stars < 20 ? num_stars : 20;
+    uint32_t random_state = 0x9e3779b9U;
 
-    for (int iter = 0; iter < max_iterations; iter++) {
-        int idx1 = rand() % num_stars;
-        int idx2 = rand() % num_stars;
-        while (idx2 == idx1 && num_stars > 1) {
-            idx2 = rand() % num_stars;
-        }
+    /* exhaust small inputs; otherwise sample bounded hypotheses deterministically */
+    for (int sample1 = 0; sample1 < limit - 1; sample1++) {
+        for (int sample2 = sample1 + 1; sample2 < limit; sample2++) {
+            int idx1 = sample1, idx2 = sample2;
+            if (num_stars > limit) {
+                idx1 = (int)(consensus_random(&random_state) % (uint32_t)num_stars);
+                idx2 = (int)(consensus_random(&random_state) % (uint32_t)(num_stars - 1));
+                if (idx2 >= idx1) idx2++;
+            }
+            w_sample[0] = w[idx1];
+            w_sample[1] = w[idx2];
+            v_sample[0] = v[idx1];
+            v_sample[1] = v[idx2];
 
-        w_sample[0] = w[idx1];
-        w_sample[1] = w[idx2];
-        v_sample[0] = v[idx1];
-        v_sample[1] = v[idx2];
+            if (starfix_solve_attitude(2, w_sample, v_sample, R_tmp) < 0) continue;
 
-        int status = starfix_solve_attitude(2, w_sample, v_sample, R_tmp);
-        if (status < 0) {
-            continue;
-        }
+            int current_inlier_count = 0;
+            double current_score = 0.0;
+            for (int i = 0; i < num_stars; i++) {
+                starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R_tmp, v[i]);
+                double dot = starfix_dot(rotated, w[i]);
+                if (dot >= cos_threshold) {
+                    current_inliers[current_inlier_count++] = i;
+                    current_score += dot;
+                }
+            }
 
-        int current_inlier_count = 0;
-        for (int i = 0; i < num_stars; i++) {
-            starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R_tmp, v[i]);
-            double dot = starfix_dot(rotated, w[i]);
-            if (dot >= cos_threshold) {
-                current_inliers[current_inlier_count++] = i;
+            if (current_inlier_count > best_inlier_count ||
+                (current_inlier_count == best_inlier_count && current_score > best_score)) {
+                best_inlier_count = current_inlier_count;
+                best_score = current_score;
+                int* swap = best_inliers;
+                best_inliers = current_inliers;
+                current_inliers = swap;
             }
         }
-
-        if (current_inlier_count > best_inlier_count) {
-            best_inlier_count = current_inlier_count;
-            int* swap = best_inliers;
-            best_inliers = current_inliers;
-            current_inliers = swap;
-        }
     }
 
-    /* refit the winning set; fall back to all observations if no pair survived */
-    int count = num_stars;
-    if (best_inlier_count >= 2) {
-        starfix_vector3_t* w_inliers =
-            starfix_alloc_array(&arena, starfix_vector3_t, best_inlier_count);
-        starfix_vector3_t* v_inliers =
-            starfix_alloc_array(&arena, starfix_vector3_t, best_inlier_count);
-        if (!w_inliers || !v_inliers) return STARFIX_ERR_MEMORY;
-        for (int i = 0; i < best_inlier_count; i++) {
-            w_inliers[i] = w[best_inliers[i]];
-            v_inliers[i] = v[best_inliers[i]];
-        }
-        w = w_inliers;
-        v = v_inliers;
-        count = best_inlier_count;
+    if (best_inlier_count < 2) return STARFIX_ERR_RANSAC_INSUFFICIENT_INLIERS;
+
+    starfix_vector3_t* w_inliers =
+        starfix_alloc_array(&arena, starfix_vector3_t, best_inlier_count);
+    starfix_vector3_t* v_inliers =
+        starfix_alloc_array(&arena, starfix_vector3_t, best_inlier_count);
+    if (!w_inliers || !v_inliers) return STARFIX_ERR_MEMORY;
+    for (int i = 0; i < best_inlier_count; i++) {
+        w_inliers[i] = w[best_inliers[i]];
+        v_inliers[i] = v[best_inliers[i]];
     }
-    int status = starfix_solve_attitude(count, w, v, R_est);
+    int status = starfix_solve_attitude(best_inlier_count, w_inliers, v_inliers, R_est);
     if (status < 0) return status;
-    return count;
+
+    int verified_inliers = 0;
+    for (int i = 0; i < best_inlier_count; i++) {
+        starfix_vector3_t rotated = starfix_rotate((const double (*)[3])R_est, v_inliers[i]);
+        if (starfix_dot(rotated, w_inliers[i]) >= cos_threshold) verified_inliers++;
+    }
+    if (verified_inliers < 2) return STARFIX_ERR_RANSAC_INSUFFICIENT_INLIERS;
+    return verified_inliers;
 }
 
 starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
@@ -310,35 +325,6 @@ starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
                     w[i].z /= w_norm;
                 }
             }
-        }
-    }
-
-    return STARFIX_SUCCESS;
-}
-
-starfix_status_t starfix_correct_aberration(int num_stars, starfix_vector3_t* v,
-                                            const double v_obs_km_s[3]) {
-    if (!v || !v_obs_km_s) return STARFIX_ERR_NULL_POINTER;
-    if (num_stars <= 0) return STARFIX_ERR_INVALID_PARAM;
-
-    const double c_kms = 299792.458;
-    double beta_x = v_obs_km_s[0] / c_kms;
-    double beta_y = v_obs_km_s[1] / c_kms;
-    double beta_z = v_obs_km_s[2] / c_kms;
-
-    for (int i = 0; i < num_stars; i++) {
-        double s_dot_b = v[i].x * beta_x + v[i].y * beta_y + v[i].z * beta_z;
-
-        /* First order stellar aberration correction: s' = s + beta - s(s . beta) */
-        double sp_x = v[i].x + beta_x - v[i].x * s_dot_b;
-        double sp_y = v[i].y + beta_y - v[i].y * s_dot_b;
-        double sp_z = v[i].z + beta_z - v[i].z * s_dot_b;
-
-        double norm = sqrt(sp_x * sp_x + sp_y * sp_y + sp_z * sp_z);
-        if (norm > 1e-12) {
-            v[i].x = sp_x / norm;
-            v[i].y = sp_y / norm;
-            v[i].z = sp_z / norm;
         }
     }
 

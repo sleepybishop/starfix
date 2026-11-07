@@ -15,6 +15,15 @@
 
 static double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 
+/* preserve both endpoints: -180 stays -180 and +180 stays +180 */
+static double wrap_longitude(double lon) {
+    if (!isfinite(lon)) return lon;
+    lon = fmod(lon, 360.0);
+    if (lon > 180.0) lon -= 360.0;
+    if (lon < -180.0) lon += 360.0;
+    return lon;
+}
+
 typedef struct {
     int count;
     int cols[6];
@@ -99,14 +108,14 @@ static void linearize(int nodes, int steps, double dt, const starfix_odometry_t*
             6,
             {prev, prev + 1, curr, curr + 1, s, b},
             {dlon_dlat, -1.0, dlon_dlat, 1.0, dlon / scale, north / (60.0 * cos_mid * scale)},
-            x[curr + 1] - x[prev + 1] - dlon,
+            wrap_longitude(x[curr + 1] - x[prev + 1]) - dlon,
             weight};
     }
 
     for (int i = 0; i < num_fixes; i++) {
         int col = 2 * fixes[i].node_idx;
         *factors++ = scalar_factor(col, x[col] - fixes[i].lat, 3.5 / 60.0);
-        *factors++ = scalar_factor(col + 1, x[col + 1] - fixes[i].lon, 3.5 / 60.0);
+        *factors++ = scalar_factor(col + 1, wrap_longitude(x[col + 1] - fixes[i].lon), 3.5 / 60.0);
     }
 }
 
@@ -224,15 +233,19 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
     if (!x || !factors || !delta || !rhs || !terms || !values || !cols || !rows || !lower ||
         !upper || !config.workspace)
         return STARFIX_ERR_MEMORY;
-    for (int i = 0; i < n; i++) {
-        lower[i] = -0.2;
-        upper[i] = 0.2;
+    for (int i = 0; i < n - 2; i++) {
+        lower[i] = -5.0;
+        upper[i] = 5.0;
     }
+    lower[n - 2] = -0.2;
+    upper[n - 2] = 0.2;
+    lower[n - 1] = -0.2;
+    upper[n - 1] = 0.2;
 
     initialize_trajectory(num_nodes, steps_per_node, dt_sec, odom, initial_lat, initial_lon,
                           *est_scale, *est_bias, x);
     int iterations = 0;
-    while (iterations < 10) {
+    while (iterations < 20) {
         linearize(num_nodes, steps_per_node, dt_sec, odom, num_fixes, fixes, initial_lat,
                   initial_lon, x, factors);
         memset(rhs, 0, (size_t)n * sizeof(*rhs));
@@ -253,7 +266,8 @@ starfix_status_t starfix_solve_graph(int num_nodes, int steps_per_node, double d
         if (sqrt(step) < 1e-5) break;
     }
 
-    for (int i = 0; i <= num_nodes; i++) poses[i] = (starfix_pose_t){x[2 * i], x[2 * i + 1]};
+    for (int i = 0; i <= num_nodes; i++)
+        poses[i] = (starfix_pose_t){x[2 * i], wrap_longitude(x[2 * i + 1])};
     *est_scale = x[n - 2];
     *est_bias = x[n - 1];
     return STARFIX_SUCCESS;

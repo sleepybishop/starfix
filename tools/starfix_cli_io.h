@@ -6,6 +6,7 @@
 /* parse finite numbers; return the first non-space suffix, or NULL on invalid input */
 const char* parse_double(const char* text, double* value);
 const char* parse_int(const char* text, int low, int high, int* value);
+double current_year_utc(void);
 
 void starfix_rotation_to_euler(const double R[3][3], double* ra_deg, double* dec_deg,
                                double* roll_deg);
@@ -15,5 +16,7 @@ int read_centroids_json(const char* path, starfix_centroid_t* centroids, int max
 int write_identified_json(const char* path, const starfix_match_t* matches, int count,
                           const starfix_catalog_star_t* catalog);
 int read_identified_json(const char* path, starfix_match_t* matches, int max_count);
+int write_attitude_json(const char* path, double ra, double dec, double roll, const double R[3][3]);
+int read_attitude_json(const char* path, double R[3][3]);
 
 #endif

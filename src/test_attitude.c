@@ -119,8 +119,6 @@ int main(void) {
 
     /* 4. RANSAC Outlier Rejection Check */
     printf("Test 4: RANSAC outlier rejection... ");
-    srand(42); /* seed random number generator for RANSAC reproducibility */
-
     starfix_vector3_t w_ransac[6];
     starfix_vector3_t v_ransac[6];
 
@@ -199,25 +197,17 @@ int main(void) {
                expected_x, w_refraction.z, expected_z);
     }
 
-    /* 6. Stellar Aberration Correction Check */
-    printf("Test 6: Stellar Aberration Correction... ");
-    starfix_vector3_t v_aberration[1] = {{1.0, 0.0, 0.0}};
-    double v_obs_km_s[3] = {0.0, 30.0, 0.0}; /* ~30 km/s Earth velocity */
-
-    int ab_status = starfix_correct_aberration(1, v_aberration, v_obs_km_s);
-    double c_kms = 299792.458;
-    double beta_y = 30.0 / c_kms;
-    double norm_ab = sqrt(1.0 + beta_y * beta_y);
-    double expected_ab_x = 1.0 / norm_ab;
-    double expected_ab_y = beta_y / norm_ab;
-
-    if (ab_status == 0 && fabs(v_aberration[0].x - expected_ab_x) < 1e-7 &&
-        fabs(v_aberration[0].y - expected_ab_y) < 1e-7) {
+    /* 6. degenerate RANSAC rejection check */
+    printf("Test 6: Degenerate RANSAC rejection... ");
+    starfix_vector3_t v_mismatch[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    starfix_vector3_t w_mismatch[3] = {{1, 0, 0}, {1, 0, 0}, {1, 0, 0}};
+    int mismatch_status =
+        starfix_solve_attitude_ransac(3, w_mismatch, v_mismatch, 0.2, R_est, arena);
+    if (mismatch_status == STARFIX_ERR_RANSAC_INSUFFICIENT_INLIERS) {
         printf("Passed\n");
     } else {
         failures++;
-        printf("FAILED (status=%d, x=%f (exp=%f), y=%f (exp=%f))\n", ab_status, v_aberration[0].x,
-               expected_ab_x, v_aberration[0].y, expected_ab_y);
+        printf("FAILED (status=%d)\n", mismatch_status);
     }
 
     printf("Test 7: Shared geometry conventions... ");
@@ -241,6 +231,47 @@ int main(void) {
     } else {
         failures++;
         printf("FAILED (projection, rotation, or normalization)\n");
+    }
+
+    printf("Test 8: Consensus beyond the first twenty observations... ");
+    starfix_vector3_t many_catalog[100], many_camera[100];
+    for (i = 0; i < 100; i++) {
+        many_catalog[i] = starfix_celestial_ray(0.37 * i, -0.7 + 0.014 * i);
+        many_camera[i] = starfix_rotate((const double (*)[3])R_true, many_catalog[i]);
+        if (i < 20) {
+            /* coherent but incorrect prefix must not hide larger consensus */
+            double old_x = many_camera[i].x;
+            many_camera[i].x = -many_camera[i].y;
+            many_camera[i].y = old_x;
+        }
+    }
+    int consensus_ok = 1;
+    int many_inliers = 0;
+    double max_error = 0.0;
+    for (int order = 0; order < 2; order++) {
+        many_inliers =
+            starfix_solve_attitude_ransac(100, many_camera, many_catalog, 0.2, R_est, arena);
+        consensus_ok &= many_inliers == 80;
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                double error = fabs(R_est[row][col] - R_true[row][col]);
+                if (error > max_error) max_error = error;
+            }
+        }
+        for (i = 0; i < 50; i++) {
+            starfix_vector3_t temp = many_catalog[i];
+            many_catalog[i] = many_catalog[99 - i];
+            many_catalog[99 - i] = temp;
+            temp = many_camera[i];
+            many_camera[i] = many_camera[99 - i];
+            many_camera[99 - i] = temp;
+        }
+    }
+    if (consensus_ok && max_error < 1e-9) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED (inliers=%d, maximum rotation error=%g)\n", many_inliers, max_error);
     }
 
     return failures ? 1 : 0;

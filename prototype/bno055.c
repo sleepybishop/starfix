@@ -10,12 +10,13 @@
 
 static int i2c_fd = -1;
 
-/* Register Addresses */
+/* register addresses */
 #define BNO055_OPR_MODE_ADDR 0x3D
 #define BNO055_GRAVITY_DATA_X_LSB_ADDR 0x2E
 #define BNO055_EULER_H_LSB_ADDR 0x1A
+#define BNO055_EULER_P_LSB_ADDR 0x1C
 
-/* Operation Modes */
+/* operation modes */
 #define OPERATION_MODE_NDOF 0x0C
 
 static int i2c_read_bytes(uint8_t reg, uint8_t* data, int length) {
@@ -33,6 +34,7 @@ static int i2c_write_byte(uint8_t reg, uint8_t data) {
 }
 
 int bno055_init(const char* i2c_dev, uint8_t addr) {
+    if (i2c_fd >= 0) bno055_close();
     i2c_fd = open(i2c_dev, O_RDWR);
     if (i2c_fd < 0) {
         perror("Failed to open I2C bus");
@@ -41,23 +43,24 @@ int bno055_init(const char* i2c_dev, uint8_t addr) {
 
     if (ioctl(i2c_fd, I2C_SLAVE, addr) < 0) {
         perror("Failed to acquire bus access and/or talk to slave");
-        close(i2c_fd);
-        i2c_fd = -1;
+        bno055_close();
         return -1;
     }
 
-    /* Set operation mode to NDOF (Nine Degrees of Freedom Sensor Fusion) */
+    /* set operation mode to NDOF (9-DOF sensor fusion) */
     if (i2c_write_byte(BNO055_OPR_MODE_ADDR, OPERATION_MODE_NDOF) < 0) {
+        bno055_close();
         return -1;
     }
 
-    /* Wait for mode switch to complete (takes up to 7ms) */
+    /* wait for mode switch to complete (up to 7 ms) */
     usleep(20000);
 
     return 0;
 }
 
 int bno055_read_gravity(double* gx, double* gy, double* gz) {
+    if (!gx || !gy || !gz) return -1;
     uint8_t buf[6];
     if (i2c_read_bytes(BNO055_GRAVITY_DATA_X_LSB_ADDR, buf, 6) < 0) {
         return -1;
@@ -67,13 +70,13 @@ int bno055_read_gravity(double* gx, double* gy, double* gz) {
     int16_t raw_y = (int16_t)((buf[3] << 8) | buf[2]);
     int16_t raw_z = (int16_t)((buf[5] << 8) | buf[4]);
 
-    /* BNO055 Gravity output is 100 LSB per m/s^2 */
+    /* BNO055 gravity output is 100 LSB per m/s^2 */
     double x = (double)raw_x / 100.0;
     double y = (double)raw_y / 100.0;
     double z = (double)raw_z / 100.0;
 
-    /* Normalize the gravity vector to give Zenith pointing vector in IMU frame */
-    double norm = sqrt(x * x + y * y + z * z);
+    /* normalize gravity vector into zenith pointing vector in IMU frame */
+    double norm = hypot(hypot(x, y), z);
     if (norm > 1e-6) {
         *gx = x / norm;
         *gy = y / norm;
@@ -88,22 +91,23 @@ int bno055_read_gravity(double* gx, double* gy, double* gz) {
 }
 
 int bno055_read_heading(double* heading_deg) {
+    if (!heading_deg) return -1;
     uint8_t buf[2];
     if (i2c_read_bytes(BNO055_EULER_H_LSB_ADDR, buf, 2) < 0) {
         return -1;
     }
 
     int16_t raw_h = (int16_t)((buf[1] << 8) | buf[0]);
-    
-    /* BNO055 Euler output is 16 LSB per degree */
+
+    /* BNO055 euler output is 16 LSB per degree */
     *heading_deg = (double)raw_h / 16.0;
     return 0;
 }
 
 int bno055_read_pitch_roll(double* pitch_deg, double* roll_deg) {
+    if (!pitch_deg || !roll_deg) return -1;
     uint8_t buf[4];
-    /* Address 0x1C is Euler Pitch LSB, 0x1E is Euler Roll LSB */
-    if (i2c_read_bytes(0x1C, buf, 4) < 0) {
+    if (i2c_read_bytes(BNO055_EULER_P_LSB_ADDR, buf, 4) < 0) {
         return -1;
     }
 
@@ -113,4 +117,11 @@ int bno055_read_pitch_roll(double* pitch_deg, double* roll_deg) {
     *pitch_deg = (double)raw_p / 16.0;
     *roll_deg = (double)raw_r / 16.0;
     return 0;
+}
+
+void bno055_close(void) {
+    if (i2c_fd >= 0) {
+        close(i2c_fd);
+        i2c_fd = -1;
+    }
 }

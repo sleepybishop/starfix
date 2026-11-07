@@ -6,6 +6,43 @@
 #include "starfix_centroid.h"
 #include "starfix_status.h"
 
+static int large_component_checks(void) {
+    const int width = 1024, height = 1024;
+    unsigned char* image = calloc((size_t)width * (size_t)height, sizeof(*image));
+    uint32_t* visited = calloc((size_t)width * (size_t)height, sizeof(*visited));
+    if (!image || !visited) {
+        free(image);
+        free(visited);
+        return 0;
+    }
+    starfix_centroid_t centroids[4];
+    /* 3301-pixel ellipse must not leave a false star after queue wrap */
+    for (int y = 480; y <= 544; y++) {
+        for (int x = 476; x <= 548; x++) {
+            double dx = (x - 512) / 34.27, dy = (y - 512) / 30.69;
+            if (dx * dx + dy * dy <= 1.0) image[y * width + x] = 255;
+        }
+    }
+    image[20 * width + 20] = 200;
+    int count = starfix_find_centroids(image, width, height, 35, 4, centroids, visited, 1);
+    int passed =
+        count == 1 && fabs(centroids[0].u - 20.0) < 1e-6 && fabs(centroids[0].v - 20.0) < 1e-6;
+
+    /* broad flood frontier exceeds 1000 queued pixels */
+    memset(image, 0, (size_t)width * (size_t)height);
+    for (int y = 100; y < 900; y++) memset(image + y * width + 100, 255, 800);
+    for (int y = 900; y < 1000; y++) image[y * width + 899] = 255;
+    image[20 * width + 20] = 200;
+    image[1000 * width + 1000] = 150;
+    count = starfix_find_centroids(image, width, height, 35, 4, centroids, visited, 2);
+    passed &= count == 2 && fabs(centroids[0].u - 20.0) < 1e-6 &&
+              fabs(centroids[0].v - 20.0) < 1e-6 && fabs(centroids[1].u - 1000.0) < 1e-6 &&
+              fabs(centroids[1].v - 1000.0) < 1e-6;
+    free(image);
+    free(visited);
+    return passed;
+}
+
 int main(void) {
     int failures = 0;
     printf("--- Running Centroid Comprehensive Tests ---\n");
@@ -101,15 +138,15 @@ int main(void) {
             count_happy);
     }
 
-    /* 4. Giant/Over-saturated Blob (should be filtered out by size constraint) */
-    /* draw a giant filled square of size 25x25 = 625 pixels (limit is 300) */
-    for (y = 10; y < 35; y++) {
-        for (x = 10; x < 35; x++) {
+    /* 4. Giant/Over-saturated Blob (should be filtered out without fragmenting) */
+    /* draw a giant filled square of size 40x40 = 1600 pixels (exceeds queue size 1000) */
+    for (y = 60; y < 100; y++) {
+        for (x = 60; x < 100; x++) {
             image[y * width + x] = 255;
         }
     }
     int count_giant = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
-    /* should detect star 0 and star 1, but discard the giant block */
+    /* should detect star 0 and star 1, and discard the entire 1600-pixel block */
     if (count_giant == 2) {
         printf("Test 4: Giant saturated blob rejection... Passed\n");
     } else {
@@ -118,54 +155,21 @@ int main(void) {
                count_giant);
     }
 
-    /* 5. Dynamic Hot Pixel Masking Checks */
-    printf("Test 5: Hot pixel calibration and masking... ");
-    /* create a mock dark frame (all zeros except 3 hot pixels) */
-    unsigned char* dark_frame =
-        (unsigned char*)calloc((size_t)width * (size_t)height, sizeof(unsigned char));
-    dark_frame[12 * width + 15] = 255; /* hot pixel 1 */
-    dark_frame[45 * width + 88] = 240; /* hot pixel 2 */
-    dark_frame[77 * width + 33] = 220; /* hot pixel 3 */
-
-    int mask_u[10];
-    int mask_v[10];
-    int num_hot = starfix_calibrate_hot_pixels(dark_frame, width, height, 100, 10, mask_u, mask_v);
-
-    if (num_hot == 3 && mask_u[0] == 15 && mask_v[0] == 12 && mask_u[1] == 88 && mask_v[1] == 45 &&
-        mask_u[2] == 33 && mask_v[2] == 77) {
-        /* clear previous image, draw 1 true star and inject same 3 hot pixels */
-        memset(image, 0, (size_t)width * (size_t)height * sizeof(unsigned char));
-        /* true star at (50, 50) */
-        image[50 * width + 50] = 250;
-        image[50 * width + 51] = 180;
-        image[51 * width + 50] = 180;
-
-        /* inject hot pixels */
-        image[12 * width + 15] = 255;
-        image[45 * width + 88] = 240;
-        image[77 * width + 33] = 220;
-
-        /* apply mask */
-        int mask_status =
-            starfix_apply_hot_pixel_mask(image, width, height, num_hot, mask_u, mask_v);
-
-        /* detect centroids */
-        int count_masked = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
-
-        if (mask_status == 0 && count_masked == 1 && fabs(centroids[0].u - 50.295) < 0.1 &&
-            fabs(centroids[0].v - 50.295) < 0.1) {
-            printf("Passed\n");
-        } else {
-            failures++;
-            printf("FAILED (status=%d, count_masked=%d, u=%.2f, v=%.2f)\n", mask_status,
-                   count_masked, centroids[0].u, centroids[0].v);
-        }
+    /* 5. Top-N Brightest Selection When Count Exceeds Capacity */
+    printf("Test 5: Top-N brightest selection... ");
+    memset(image, 0, (size_t)width * (size_t)height);
+    image[10 * width + 10] = 60;  /* dim star in top row */
+    image[20 * width + 20] = 80;  /* medium star in middle row */
+    image[90 * width + 90] = 250; /* brightest star in bottom row */
+    int top_count = starfix_find_centroids(image, width, height, 35, 2, centroids, NULL, 1);
+    if (top_count == 2 && fabs(centroids[0].u - 90.0) < 1e-6 &&
+        fabs(centroids[1].u - 20.0) < 1e-6) {
+        printf("Passed\n");
     } else {
         failures++;
-        printf("FAILED (calibration found %d hot pixels, expected 3)\n", num_hot);
+        printf("FAILED (top_count=%d, u0=%.2f, u1=%.2f)\n", top_count, centroids[0].u,
+               centroids[1].u);
     }
-
-    free(dark_frame);
 
     /* reset and wrap must leave the next generation usable */
     printf("Test 6: Generation-zero mask handling... ");
@@ -200,6 +204,14 @@ int main(void) {
     } else {
         failures++;
         printf("FAILED (count=%d)\n", limited_count);
+    }
+
+    printf("Test 8: Complete draining of wrapped and full blob queues... ");
+    if (large_component_checks()) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED (large component fragmented or isolated stars lost)\n");
     }
 
     free(image);
