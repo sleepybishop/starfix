@@ -19,8 +19,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libjson-perl build-essential
-        python3 -m pip install pillow piexif
+        sudo apt-get install -y libjson-perl imagemagick build-essential
 
     - name: Build Database
       run: make db

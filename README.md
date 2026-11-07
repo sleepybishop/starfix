@@ -45,7 +45,7 @@ make demo
 
 ### Photo solving
 
-Install the photo tools' dependencies with `python3 -m pip install pillow piexif`.
+Install the photo tools' dependencies with Perl (`JSON`) and ImageMagick (`magick` or `convert`).
 The camera frame is right-handed: **+X image right, +Y image down, +Z forward**,
 after applying EXIF orientation. IMU zenith measurements must be transformed into
 this same camera frame.
@@ -57,7 +57,7 @@ the location demonstrates consistency, not independent geolocation accuracy.
 
 To calculate a position using an independently measured camera zenith:
 ```bash
-python3 demo_photo/solve_photo.py --zenith 0 0 1 photo.jpg
+perl demo_photo/solve_photo.pl --zenith 0 0 1 photo.jpg
 ```
 The position is computed directly from the star attitude, camera zenith, and UTC
 time. No initial position or EXIF GPS is required. Longitude is wrapped to

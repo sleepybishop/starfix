@@ -13,13 +13,6 @@ data/*.png
 data/*.pgm
 data/*.npz
 
-# python build and cache files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-
 # ignore local roadmap and evaluation files
 TODO.md
 *evaluation.md
@@ -29,7 +22,6 @@ starfix_prototype_sim
 prototype/test_camera
 starfix_cli
 t/test_*
-!t/test_*.py
 bench*
 scratch_*
 

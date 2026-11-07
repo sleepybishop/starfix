@@ -43,7 +43,7 @@ test_camera: test_camera.o
 
 check: test_camera
 	./test_camera
-	PYTHONDONTWRITEBYTECODE=1 python3 ../t/test_prototype_build.py
+	prove -v ../t/04-prototype-build.t
 
 %.o: %.c
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
