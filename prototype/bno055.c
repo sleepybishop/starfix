@@ -17,6 +17,7 @@ static int i2c_fd = -1;
 #define BNO055_EULER_P_LSB_ADDR 0x1C
 
 /* operation modes */
+#define OPERATION_MODE_CONFIG 0x00
 #define OPERATION_MODE_NDOF 0x0C
 
 static int i2c_read_bytes(uint8_t reg, uint8_t* data, int length) {
@@ -47,13 +48,18 @@ int bno055_init(const char* i2c_dev, uint8_t addr) {
         return -1;
     }
 
+    /* enter CONFIGMODE before switching fusion mode per BNO055 datasheet */
+    if (i2c_write_byte(BNO055_OPR_MODE_ADDR, OPERATION_MODE_CONFIG) < 0) {
+        bno055_close();
+        return -1;
+    }
+    usleep(20000);
+
     /* set operation mode to NDOF (9-DOF sensor fusion) */
     if (i2c_write_byte(BNO055_OPR_MODE_ADDR, OPERATION_MODE_NDOF) < 0) {
         bno055_close();
         return -1;
     }
-
-    /* wait for mode switch to complete (up to 7 ms) */
     usleep(20000);
 
     return 0;
@@ -77,16 +83,11 @@ int bno055_read_gravity(double* gx, double* gy, double* gz) {
 
     /* normalize gravity vector into zenith pointing vector in IMU frame */
     double norm = hypot(hypot(x, y), z);
-    if (norm > 1e-6) {
-        *gx = x / norm;
-        *gy = y / norm;
-        *gz = z / norm;
-    } else {
-        *gx = 0.0;
-        *gy = 0.0;
-        *gz = 1.0;
-    }
+    if (norm <= 1e-6) return -1;
 
+    *gx = x / norm;
+    *gy = y / norm;
+    *gz = z / norm;
     return 0;
 }
 

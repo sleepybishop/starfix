@@ -19,7 +19,11 @@ TODO.md
 *.o
 starfix_prototype
 starfix_prototype_sim
+prototype/starfix_prototype
+prototype/starfix_prototype_sim
 prototype/test_camera
+prototype/bodega_to_marquesas.tsv
+prototype/bodega_to_marquesas.nmea
 starfix_cli
 t/test_*
 bench*
@@ -27,7 +31,6 @@ scratch_*
 
 
 output.json
-trail_preprocessor
 *.png
 *.pgm
 

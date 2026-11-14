@@ -171,10 +171,8 @@ int main(void) {
                centroids[1].u);
     }
 
-    /* reset and wrap must leave the next generation usable */
+    /* reset and wrap must leave the next generation usable on the exact same pixel */
     printf("Test 6: Generation-zero mask handling... ");
-    memset(image, 0, (size_t)width * (size_t)height);
-    image[60 * width + 60] = 255;
     uint32_t* visited = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
     if (!visited) return 1;
     uint32_t generations[] = {0, 1, 2, UINT32_MAX, 0, 1};
@@ -182,10 +180,11 @@ int main(void) {
     for (size_t generation = 0; generation < sizeof(generations) / sizeof(generations[0]);
          generation++) {
         memset(image, 0, (size_t)width * (size_t)height);
-        image[60 * width + (generation >= 3 ? 61 : 60)] = 255;
+        image[60 * width + 60] = 255;
         int count = starfix_find_centroids(image, width, height, 35, 10, centroids, visited,
                                            generations[generation]);
-        generations_ok &= count == 1;
+        generations_ok &=
+            count == 1 && fabs(centroids[0].u - 60.0) < 1e-6 && fabs(centroids[0].v - 60.0) < 1e-6;
     }
     if (generations_ok) {
         printf("Passed\n");
@@ -194,6 +193,22 @@ int main(void) {
         printf("FAILED (star lost across reset or wrap)\n");
     }
     free(visited);
+
+    printf("Test 6b: Saturated flat-top plateau preserves symmetry... ");
+    memset(image, 0, (size_t)width * (size_t)height);
+    for (y = 39; y <= 41; y++) {
+        for (x = 39; x <= 41; x++) {
+            image[y * width + x] = 255;
+        }
+    }
+    int sat_count = starfix_find_centroids(image, width, height, 35, 10, centroids, NULL, 1);
+    if (sat_count == 1 && fabs(centroids[0].u - 40.0) < 1e-9 &&
+        fabs(centroids[0].v - 40.0) < 1e-9) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED (count=%d, u=%.6f, v=%.6f)\n", sat_count, centroids[0].u, centroids[0].v);
+    }
 
     printf("Test 7: Count limited to output capacity... ");
     image[80 * width + 80] = 255;

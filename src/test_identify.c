@@ -3,57 +3,60 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "starfix_arena.h"
 #include "starfix_attitude.h"
 #include "starfix_cli_io.h"
 #include "starfix_identify.h"
 #include "starfix_status.h"
 
-static uint8_t mempool[10 * 1024 * 1024];
-static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-static int test_catalog_record_formats(void) {
-    const char* path = "/tmp/starfix_coordinate_formats.bin";
-    unsigned char bytes[40] = {
-        [0] = 'S', [1] = 'F',   [2] = 'I',   [3] = 'X',
-        [4] = 1,   [8] = 1,     [12] = 50, /* one star, one hash entry */
-        [16] = 42, [21] = 0x80, [23] = 0x80, [24] = 128,
+static int test_catalog_record_proper_motion(void) {
+    const char* path = "/tmp/starfix_pm_record.bin";
+    /* 16-byte header + 18-byte star record + 12-byte hash entry = 46 bytes */
+    unsigned char bytes[46] = {
+        [0] = 'S',   [1] = 'F',   [2] = 'I',   [3] = 'X',   [4] = 1,     [8] = 1, [12] = 50,
+        [16] = 42,   [23] = 0x80, [27] = 0x80, [28] = 0xC4, [29] = 0x09, /* mag = 2.500 */
+        [30] = 0x88, [31] = 0x13, /* pm_ra_q = +5000 (+1000 mas/yr) */
+        [32] = 0xF0, [33] = 0xD8, /* pm_dec_q = -10000 (-2000 mas/yr) */
     };
-    const unsigned char formats[] = {0, 1, 1, 2, 0};
-    const unsigned char ra_lows[] = {0, 0, 52, 0, 52};
-    const unsigned char dec_lows[] = {0, 0, 86, 0, 86};
-    int passed = 1;
-    for (size_t i = 0; i < sizeof(formats); i++) {
-        bytes[25] = ra_lows[i];
-        bytes[26] = dec_lows[i];
-        bytes[27] = formats[i];
-        FILE* file = fopen(path, "wb");
-        if (!file) return 0;
-        int written = fwrite(bytes, 1, sizeof(bytes), file) == sizeof(bytes);
-        if (fclose(file) != 0) written = 0;
-        if (!written) {
-            remove(path);
-            return 0;
-        }
-        starfix_db_t loaded = {0};
-        int status = starfix_load_db(path, &loaded);
-        if (i < 3) {
-            double ra = i == 0 ? 32768.0 * (2.0 * M_PI) / 65535.0
-                               : (8388608.0 + ra_lows[i]) * (2.0 * M_PI) / 16777215.0;
-            double dec = i == 0 ? 32768.0 * M_PI / 65535.0 - M_PI / 2.0
-                                : (8388608.0 + dec_lows[i]) * M_PI / 16777215.0 - M_PI / 2.0;
-            if (status != STARFIX_SUCCESS || loaded.num_stars != 1 ||
-                fabs(loaded.stars[0].ra0 - ra) > 1e-14 || fabs(loaded.stars[0].dec0 - dec) > 1e-14)
-                passed = 0;
-        } else if (status != STARFIX_ERR_DATA_CORRUPTION || loaded.stars || loaded.hashes ||
-                   loaded.num_stars || loaded.num_hashes || loaded.bins) {
-            passed = 0;
-        }
-        starfix_free_db(&loaded);
+    FILE* file = fopen(path, "wb");
+    if (!file) return 0;
+    int written = fwrite(bytes, 1, sizeof(bytes), file) == sizeof(bytes);
+    if (fclose(file) != 0) written = 0;
+    if (!written) {
+        remove(path);
+        return 0;
+    }
+
+    starfix_db_t loaded = {0};
+    int status = starfix_load_db(path, &loaded);
+    double exp_ra = 2147483648.0 * (2.0 * M_PI) / 4294967295.0;
+    double exp_dec = 2147483648.0 * M_PI / 4294967295.0 - M_PI / 2.0;
+    int passed = status == STARFIX_SUCCESS && loaded.num_stars == 1 && loaded.stars[0].hip == 42 &&
+                 fabs(loaded.stars[0].mag - 2.5) < 1e-12 &&
+                 fabs(loaded.stars[0].ra0 - exp_ra) < 1e-14 &&
+                 fabs(loaded.stars[0].dec0 - exp_dec) < 1e-14;
+    if (passed) {
+        starfix_catalog_star_t zero_pm = starfix_make_catalog_star(42, exp_ra, exp_dec, 2.5);
+        starfix_propagate_astrometry(&zero_pm, 1, 2100.0);
+        starfix_propagate_astrometry(loaded.stars, 1, 2100.0);
+        double arcsec_rad = M_PI / (180.0 * 3600.0);
+        passed &= fabs((loaded.stars[0].ra - zero_pm.ra) - 100.0 * arcsec_rad) < 2e-6;
+        passed &= fabs((loaded.stars[0].dec - zero_pm.dec) + 200.0 * arcsec_rad) < 2e-6;
+    }
+    starfix_free_db(&loaded);
+
+    /* truncated 45-byte file must fail with STARFIX_ERR_DATA_CORRUPTION */
+    file = fopen(path, "wb");
+    if (!file) return 0;
+    written = fwrite(bytes, 1, sizeof(bytes) - 1, file) == sizeof(bytes) - 1;
+    if (fclose(file) != 0) written = 0;
+    if (written) {
+        passed &= starfix_load_db(path, &loaded) == STARFIX_ERR_DATA_CORRUPTION && !loaded.stars;
+    } else {
+        passed = 0;
     }
     remove(path);
     return passed;
@@ -68,10 +71,10 @@ static int identify_synthetic_field(const double x_deg[5], const double y_deg[5]
     for (int i = 0; i < 5; i++) {
         double x = x_deg[i] * M_PI / 180.0, y = y_deg[i] * M_PI / 180.0;
         vectors[i] = (starfix_vector3_t){sin(x) * cos(y), sin(y), cos(x) * cos(y)};
-        catalog[i].ra = atan2(vectors[i].y, vectors[i].x);
-        catalog[i].dec = asin(vectors[i].z);
-        /* Reflection across an almost straight star pattern is a small perturbation;
-         * for a genuinely two-dimensional field it cannot fit a proper rotation. */
+        catalog[i] = starfix_make_catalog_star(i + 1, atan2(vectors[i].y, vectors[i].x),
+                                               asin(vectors[i].z), 2.0);
+        /* reflection across an almost straight star pattern is a small perturbation;
+         * for a genuinely two-dimensional field it cannot fit a proper rotation */
         double observed_x = x + dx_deg[i] * M_PI / 180.0;
         double observed_y = -y + dy_deg[i] * M_PI / 180.0;
         double z = cos(observed_x) * cos(observed_y);
@@ -113,7 +116,7 @@ static int identify_synthetic_field(const double x_deg[5], const double y_deg[5]
     }
     starfix_db_t db = {catalog, hashes, 5, 5, 63};
     starfix_match_t matches[5];
-    int count = starfix_identify_stars(5, centroids, 1024, 1024, 24, &db, 5, matches, arena, NULL);
+    int count = starfix_identify_stars(5, centroids, 1024, 1024, 24, &db, 5, matches, NULL);
     for (int i = 0; i < count; i++)
         if (matches[i].centroid_idx != matches[i].catalog_idx) return 0;
     return count;
@@ -126,7 +129,7 @@ int main(void) {
     /* 1. NULL parameter validations */
     printf("Test 1: Sizing and NULL validations... ");
     starfix_match_t matches[10];
-    int ret1 = starfix_identify_stars(0, NULL, 1024, 1024, 12.0, NULL, 10, matches, arena, NULL);
+    int ret1 = starfix_identify_stars(0, NULL, 1024, 1024, 12.0, NULL, 10, matches, NULL);
     if (ret1 == STARFIX_ERR_NULL_POINTER) {
         printf("Passed\n");
     } else {
@@ -134,31 +137,34 @@ int main(void) {
         printf("FAILED (got %d)\n", ret1);
     }
 
-    /* 2. Database loading */
+    /* 2. database loading and dense asterism coverage */
     printf("Test 2: Loading binary database... ");
     starfix_db_t db = {0};
 
     int db_status = starfix_load_db("data/starfix_db.bin", &db);
-    if (db_status == 0 && db.num_stars > 0 && db.num_hashes > 0 && db.bins > 0) {
+    int belt_found = 0;
+    for (uint32_t s_i = 0; db_status == 0 && s_i < db.num_stars; s_i++) {
+        int32_t hip = db.stars[s_i].hip;
+        if (hip == 26727 || hip == 26311 || hip == 25930) belt_found++;
+    }
+    if (db_status == 0 && db.num_stars > 0 && db.num_hashes > 0 && db.bins > 0 && belt_found == 3) {
         printf("Passed\n");
         printf("  Loaded %d catalog stars and %d hash entries (bin factor: %d)\n", db.num_stars,
                db.num_hashes, db.bins);
     } else {
         failures++;
-        printf("FAILED (load status: %d, stars: %d, entries: %d)\n", db_status, db.num_stars,
-               db.num_hashes);
+        printf("FAILED (load status: %d, stars: %d, entries: %d, belt: %d)\n", db_status,
+               db.num_stars, db.num_hashes, belt_found);
         return -1;
     }
 
     /* 2b. corrupt database indices must be rejected before catalog access */
     printf("Test 2b: Rejecting corrupt database indices... ");
     const char* corrupt_path = "/tmp/starfix_corrupt_db.bin";
-    unsigned char corrupt_db[40] = {
-        'S', 'F', 'I', 'X', 1, 0, 0, 0,             /* one catalog star */
-        1,   0,   0,   0,                           /* one hash entry */
-        50,  0,   0,   0,                           /* bin factor */
-        0,   0,   0,   0,   0, 0, 0, 0, 0, 0, 0, 0, /* catalog record */
-        0,   0,   0,   0,   1, 0, 0, 0, 0, 0, 0, 0  /* invalid star index 1 */
+    unsigned char corrupt_db[46] = {
+        [0] = 'S', [1] = 'F', [2] = 'I', [3] = 'X',
+        [4] = 1,   [8] = 1,   [12] = 50, /* one catalog star, one hash entry */
+        [38] = 1,                        /* invalid star index 1 in hash entry */
     };
     FILE* corrupt_file = fopen(corrupt_path, "wb");
     starfix_db_t corrupt = {.num_stars = 99, .num_hashes = 99, .bins = 99};
@@ -182,8 +188,8 @@ int main(void) {
         starfix_free_db(&corrupt);
     }
 
-    printf("Test 2c: Tagged 24-bit and legacy 16-bit coordinates... ");
-    if (test_catalog_record_formats()) {
+    printf("Test 2c: 32-bit coordinates and proper motion record... ");
+    if (test_catalog_record_proper_motion()) {
         printf("Passed\n");
     } else {
         failures++;
@@ -233,10 +239,10 @@ int main(void) {
         return -1;
     }
 
-    /* Run identification */
+    /* run identification */
     starfix_match_t out_matches[20];
-    int ret = starfix_identify_stars(count, centroids, 1024, 1024, 12.0, &db, 20, out_matches,
-                                     arena, NULL);
+    int ret =
+        starfix_identify_stars(count, centroids, 1024, 1024, 12.0, &db, 20, out_matches, NULL);
 
     if (ret >= 3) {
         int lis_unique = 1;
@@ -263,13 +269,13 @@ int main(void) {
         printf("Test 3c: Blind fallback and output bounds... ");
         const double wrong_hint[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
         starfix_match_t limited[4] = {{-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}};
-        int fallback_status = starfix_identify_stars(count, centroids, 1024, 1024, 12.0, &db, 3,
-                                                     limited, arena, wrong_hint);
+        int fallback_status =
+            starfix_identify_stars(count, centroids, 1024, 1024, 12.0, &db, 3, limited, wrong_hint);
         int fallback_ok = fallback_status == 3 &&
                           memcmp(limited, out_matches, 3 * sizeof(*limited)) == 0 &&
                           limited[3].centroid_idx == -1 && limited[3].catalog_idx == -1;
         int quad_status =
-            starfix_identify_stars(4, centroids, 1024, 1024, 12.0, &db, 3, limited, arena, NULL);
+            starfix_identify_stars(4, centroids, 1024, 1024, 12.0, &db, 3, limited, NULL);
         if (!fallback_ok || quad_status != STARFIX_ERR_IDENTIFY_NO_MATCH) {
             failures++;
             printf("FAILED (fallback=%d, quad=%d)\n", fallback_status, quad_status);
@@ -277,7 +283,7 @@ int main(void) {
         }
         printf("Passed\n");
 
-        /* 3b. Tracking Mode Check (with attitude hint) */
+        /* 3b. tracking mode check (with attitude hint) */
         printf("Test 3b: Tracking Mode with Attitude Hint... ");
         starfix_vector3_t w_vecs[20], v_vecs[20];
         int m_cnt = ret;
@@ -291,32 +297,29 @@ int main(void) {
             w_vecs[i].x = cx / norm;
             w_vecs[i].y = cy / norm;
             w_vecs[i].z = 1.0 / norm;
-
-            double dec_s = db.stars[cat_i].dec;
-            double ra_s = db.stars[cat_i].ra;
-            v_vecs[i].x = cos(dec_s) * cos(ra_s);
-            v_vecs[i].y = cos(dec_s) * sin(ra_s);
-            v_vecs[i].z = sin(dec_s);
+            v_vecs[i] = db.stars[cat_i].unit;
         }
         double R_hint[3][3];
         starfix_solve_attitude(m_cnt, w_vecs, v_vecs, R_hint);
 
         starfix_match_t track_matches[20];
         int track_ret = starfix_identify_stars(count, centroids, 1024, 1024, 12.0, &db, 20,
-                                               track_matches, arena, (const double (*)[3])R_hint);
+                                               track_matches, (const double (*)[3])R_hint);
         if (track_ret >= 3) {
             int unique = 1;
             int a, b;
             for (a = 0; a < track_ret; a++) {
                 for (b = a + 1; b < track_ret; b++) {
-                    if (track_matches[a].centroid_idx == track_matches[b].centroid_idx) unique = 0;
+                    if (track_matches[a].centroid_idx == track_matches[b].centroid_idx ||
+                        track_matches[a].catalog_idx == track_matches[b].catalog_idx)
+                        unique = 0;
                 }
             }
             if (unique) {
                 printf("Passed (%d unique matches in tracking mode!)\n", track_ret);
             } else {
                 failures++;
-                printf("FAILED (tracking mode reused a centroid)\n");
+                printf("FAILED (tracking mode reused a centroid or catalog star)\n");
                 return -1;
             }
         } else {
@@ -324,26 +327,43 @@ int main(void) {
             printf("FAILED (tracking mode matched %d stars)\n", track_ret);
             return -1;
         }
+
+        /* 3d. wide-aspect corner tracking mode beyond horizontal half-FOV */
+        printf("Test 3d: Wide-aspect corner tracking... ");
+        starfix_centroid_t corner_c[4];
+        starfix_catalog_star_t corner_cat[4];
+        const double cu[4] = {30.0, 1890.0, 30.0, 1890.0};
+        const double cv[4] = {30.0, 30.0, 1050.0, 1050.0};
+        double corner_focal = starfix_focal_length(1920.0, 12.0);
+        for (int k = 0; k < 4; k++) {
+            corner_c[k] = (starfix_centroid_t){.u = cu[k], .v = cv[k], .flux = 100.0};
+            starfix_vector3_t ray = starfix_camera_ray(cu[k] - 960.0, cv[k] - 540.0, corner_focal);
+            corner_cat[k] = starfix_make_catalog_star(k + 1, atan2(ray.y, ray.x), asin(ray.z), 2.0);
+        }
+        starfix_db_t corner_db = {corner_cat, NULL, 4, 0, 50};
+        const double eye[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        starfix_match_t corner_m[4];
+        int corner_ret =
+            starfix_identify_stars(4, corner_c, 1920, 1080, 12.0, &corner_db, 4, corner_m, eye);
+        if (corner_ret == 4) {
+            printf("Passed\n");
+        } else {
+            failures++;
+            printf("FAILED (matched %d/4 corner stars)\n", corner_ret);
+        }
     } else {
         failures++;
         printf("FAILED (matched only %d stars)\n", ret);
         return -1;
     }
 
-    /* 4. Stellar Precession Propagation Check */
+    /* 4. stellar precession propagation check */
     printf("Test 4: Stellar Precession Propagation... ");
-    starfix_catalog_star_t dummy_cat[1] = {{0}};
-    dummy_cat[0].hip = 12345;
-    dummy_cat[0].ra0 = 0.0;
-    dummy_cat[0].dec0 = 0.0;
-    dummy_cat[0].ra = 0.0;
-    dummy_cat[0].dec = 0.0;
-    dummy_cat[0].mag = 2.0;
+    starfix_catalog_star_t dummy_cat[1] = {starfix_make_catalog_star(12345, 0.0, 0.0, 2.0)};
 
     int prec_status = starfix_propagate_astrometry(dummy_cat, 1, 2100.0);
 
-    /* Expected offsets using exact IAU 1976 Precession Matrix:
-       T = 1.0 */
+    /* expected offsets using IAU 1976 precession + nutation + aberration at T = 1.0 */
     double expected_d_dec = 0.009755;
     double expected_d_ra = 0.022339;
 

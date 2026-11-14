@@ -7,7 +7,7 @@ use Test::More;
 
 my $dir = tempdir(CLEANUP => 1);
 is(system('./t/test_cli_io', "$dir/records.json"), 0, 'Flat record readers, bounds, and matrix layout');
-for my $command ('--fit-photo', '--solve-photo') {
+for my $command ('--fit-photo', '--solve-photo', '--sweep-photo') {
     my $output = `./starfix_cli $command 0 0 2>&1`;
     ok($? != 0 && $output =~ /Usage:/, "$command rejects missing arguments");
     $output = `./starfix_cli $command 0 0 1 12 2026 560 1 1 2>&1`;
@@ -42,6 +42,7 @@ for my $args (
     ['--fit-photo', 'garbage', '0', '1'], ['--fit-photo', '0', '0', '1e9999'],
     ['--fit-photo', '0', '0', '1', '1e-9999'],
     ['--solve-photo', 'garbage', '0', '0', '1'],
+    ['--sweep-photo', 'garbage', '0', '0', '1'],
 ) {
     my ($status, $text) = run_cli(@$args);
     ok($status != 0 && $text =~ /Invalid numeric argument|Usage:/,

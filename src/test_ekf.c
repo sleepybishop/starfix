@@ -73,14 +73,16 @@ int main(void) {
     filter.R[1] = 1e12;
     double old_lat = filter.lat;
     double old_lon = filter.lon;
-    /* correct with a far-away point */
-    starfix_ekf_correct(&filter, 40.0, -100.0);
+    /* correct with a fix inside the innovation gate */
+    int noise_status = starfix_ekf_correct(&filter, old_lat + 1.0, old_lon + 1.0);
     /* state should not change much because R is huge */
-    if (fabs(filter.lat - old_lat) < 1e-6 && fabs(filter.lon - old_lon) < 1e-6) {
+    if (noise_status == STARFIX_SUCCESS && fabs(filter.lat - old_lat) < 1e-6 &&
+        fabs(filter.lon - old_lon) < 1e-6) {
         printf("Passed\n");
     } else {
         failures++;
-        printf("FAILED (moved too much: %f, %f)\n", filter.lat - old_lat, filter.lon - old_lon);
+        printf("FAILED (status=%d, moved: %f, %f)\n", noise_status, filter.lat - old_lat,
+               filter.lon - old_lon);
     }
 
     /* 5. A rejected innovation must not partially mutate filter state. */
@@ -150,6 +152,21 @@ int main(void) {
     numerical_ok &= memcmp(&filter, &before, sizeof(filter)) == 0;
     if (!numerical_ok) failures++;
     printf(numerical_ok ? "Passed\n" : "FAILED (numerical failure accepted or modified state)\n");
+
+    printf("Test 9: High-latitude metric isotropy... ");
+    starfix_ekf_t north_ekf, east_ekf;
+    double hi_lat = 65.0, hi_lon = -20.0;
+    double cos65 = cos(hi_lat * M_PI / 180.0);
+    starfix_ekf_init(&north_ekf, hi_lat, hi_lon);
+    starfix_ekf_init(&east_ekf, hi_lat, hi_lon);
+    /* 3 nm north vs 3 nm east physical fix offsets */
+    int hi_ok = starfix_ekf_correct(&north_ekf, hi_lat + 0.05, hi_lon) == STARFIX_SUCCESS &&
+                starfix_ekf_correct(&east_ekf, hi_lat, hi_lon + 0.05 / cos65) == STARFIX_SUCCESS;
+    double north_step_nm = (north_ekf.lat - hi_lat) * 60.0;
+    double east_step_nm = (east_ekf.lon - hi_lon) * 60.0 * cos65;
+    hi_ok &= fabs(north_step_nm - east_step_nm) < 1e-4;
+    if (!hi_ok) failures++;
+    printf(hi_ok ? "Passed\n" : "FAILED (anisotropic high-latitude gain)\n");
 
     return failures ? 1 : 0;
 }

@@ -6,7 +6,7 @@
 
 #include "starfix_arena.h"
 
-static uint8_t mempool[10 * 1024 * 1024];
+static uint8_t mempool[64 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
 #ifndef M_PI

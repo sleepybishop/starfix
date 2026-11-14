@@ -4,263 +4,260 @@ use warnings;
 use File::Spec;
 use JSON;
 
+my $PI = 3.14159265358979323846;
+
 sub get_camera_rotation_matrix {
     my ($ra_rad, $dec_rad, $roll_rad) = @_;
-    
-    # z axis points toward target ra/dec
+
     my $z_cam = [
         cos($dec_rad) * cos($ra_rad),
         cos($dec_rad) * sin($ra_rad),
         sin($dec_rad)
     ];
-    
-    # x axis points east (zero roll horizontal axis)
-    my $x_zero = [
-        -sin($ra_rad),
-        cos($ra_rad),
-        0.0
-    ];
-    
-    # y axis points north (zero roll vertical axis) via cross product
+    my $x_zero = [ -sin($ra_rad), cos($ra_rad), 0.0 ];
     my $y_zero = [
-        $z_cam->[1]*$x_zero->[2] - $z_cam->[2]*$x_zero->[1],
-        $z_cam->[2]*$x_zero->[0] - $z_cam->[0]*$x_zero->[2],
-        $z_cam->[0]*$x_zero->[1] - $z_cam->[1]*$x_zero->[0]
+        $z_cam->[1] * $x_zero->[2] - $z_cam->[2] * $x_zero->[1],
+        $z_cam->[2] * $x_zero->[0] - $z_cam->[0] * $x_zero->[2],
+        $z_cam->[0] * $x_zero->[1] - $z_cam->[1] * $x_zero->[0]
     ];
-    
-    # apply roll angle around z axis
     my $x_cam = [
         cos($roll_rad) * $x_zero->[0] + sin($roll_rad) * $y_zero->[0],
         cos($roll_rad) * $x_zero->[1] + sin($roll_rad) * $y_zero->[1],
         cos($roll_rad) * $x_zero->[2] + sin($roll_rad) * $y_zero->[2]
     ];
-    
     my $y_cam = [
         -sin($roll_rad) * $x_zero->[0] + cos($roll_rad) * $y_zero->[0],
         -sin($roll_rad) * $x_zero->[1] + cos($roll_rad) * $y_zero->[1],
         -sin($roll_rad) * $x_zero->[2] + cos($roll_rad) * $y_zero->[2]
     ];
-    
     return ($x_cam, $y_cam, $z_cam);
 }
 
-# box-muller transform to generate standard normal variables
 sub rand_normal {
     my ($mean, $std) = @_;
     my $u1 = rand();
     my $u2 = rand();
-    while ($u1 <= 1e-15) { $u1 = rand(); } # avoid log(0)
-    my $z = sqrt(-2.0 * log($u1)) * cos(2.0 * 3.1415926535897932 * $u2);
+    $u1 = rand() while $u1 <= 1e-15;
+    my $z = sqrt(-2.0 * log($u1)) * cos(2.0 * $PI * $u2);
     return $mean + $z * $std;
 }
 
+sub tan_rad {
+    my ($val) = @_;
+    return sin($val) / cos($val);
+}
+
+sub astrometry_frame {
+    my ($year) = @_;
+    my $mjd = 51544.5 + ($year - 2000.0) * 365.25;
+    my $T = ($mjd - 51544.5) / 36525.0;
+    my $arcsec_rad = $PI / (180.0 * 3600.0);
+
+    my $zeta = $arcsec_rad * (2.650545 + $T * (2306.083227 + $T * (0.2988499 + $T * 0.01801828)));
+    my $z = $arcsec_rad * (-2.650545 + $T * (2306.077181 + $T * (1.0927348 + $T * 0.01826837)));
+    my $theta = $arcsec_rad * ($T * (2004.191903 - $T * (0.4294934 + $T * 0.04182264)));
+
+    my ($cz, $sz) = (cos($zeta), sin($zeta));
+    my ($cza, $sza) = (cos($z), sin($z));
+    my ($ct, $st) = (cos($theta), sin($theta));
+    my @prec = (
+        [ $cz * $ct * $cza - $sz * $sza, -$sz * $ct * $cza - $cz * $sza, -$st * $cza ],
+        [ $cz * $ct * $sza + $sz * $cza, -$sz * $ct * $sza + $cz * $cza, -$st * $sza ],
+        [ $cz * $st,                     -$sz * $st,                     $ct ],
+    );
+
+    my $eps = (23.4392911 + $T * (-46.8150 / 3600.0)) * $PI / 180.0;
+    my $omega = (125.04452 - 1934.136261 * $T) * $PI / 180.0;
+    my $Lsun = (280.4665 + 36000.7698 * $T) * $PI / 180.0;
+    my $Lmoon = (218.3165 + 481267.8813 * $T) * $PI / 180.0;
+    my $dpsi = (-17.20 * sin($omega) - 1.32 * sin(2.0 * $Lsun)
+                - 0.23 * sin(2.0 * $Lmoon) + 0.21 * sin(2.0 * $omega)) * $arcsec_rad;
+    my $deps = (9.20 * cos($omega) + 0.57 * cos(2.0 * $Lsun)
+                + 0.10 * cos(2.0 * $Lmoon) - 0.09 * cos(2.0 * $omega)) * $arcsec_rad;
+
+    my ($se, $ce) = (sin($eps), cos($eps));
+    my ($sp, $cp) = (sin($dpsi), cos($dpsi));
+    my ($sede, $cede) = (sin($eps + $deps), cos($eps + $deps));
+    my @nut = (
+        [ $cp,          -$sp * $ce,                 -$sp * $se ],
+        [ $cede * $sp,  $cede * $cp * $ce + $sede * $se, $cede * $cp * $se - $sede * $ce ],
+        [ $sede * $sp,  $sede * $cp * $ce - $cede * $se, $sede * $cp * $se + $cede * $ce ],
+    );
+
+    my @P;
+    for my $i (0 .. 2) {
+        for my $j (0 .. 2) {
+            $P[$i][$j] = $nut[$i][0] * $prec[0][$j]
+                       + $nut[$i][1] * $prec[1][$j]
+                       + $nut[$i][2] * $prec[2][$j];
+        }
+    }
+
+    my $L = 2.0 * $PI * (0.27908 + 100.00214 * $T);
+    my @aberr = (-0.994e-4 * sin($L), 0.912e-4 * cos($L), 0.395e-4 * cos($L));
+    return (\@P, \@aberr);
+}
+
 sub main {
-    my $script_dir = File::Spec->rel2abs(File::Spec->path());
-    # find project base dir
-    my $base_dir = File::Spec->catdir(File::Spec->splitdir(File::Spec->rel2abs($0)));
-    my @dirs = File::Spec->splitdir($base_dir);
-    pop @dirs; # pop filename
-    pop @dirs; # pop scripts dir
-    $base_dir = File::Spec->catdir(@dirs);
-    
+    my @dirs = File::Spec->splitdir(File::Spec->rel2abs($0));
+    pop @dirs;
+    pop @dirs;
+    my $base_dir = File::Spec->catdir(@dirs);
+
     my $db_path = File::Spec->catfile($base_dir, "data", "starfix_db.bin");
     my $centroids_path = File::Spec->catfile($base_dir, "data", "mock_centroids.json");
     my $image_path = File::Spec->catfile($base_dir, "data", "mock_image.pgm");
-    
+
     print "Loading database from $db_path...\n";
     open(my $fh, '<:raw', $db_path) or die "Cannot open database: $!";
-    
+
     my $magic;
     read($fh, $magic, 4) == 4 or die "Short read on magic prefix";
     die "Invalid database magic prefix: $magic" unless $magic eq "SFIX";
-    
+
     my $header_buf;
     read($fh, $header_buf, 12) == 12 or die "Short read on header";
     my ($num_stars, $num_entries, $bin_factor) = unpack("V V V", $header_buf);
-    
-    my @stars;
+
+    my $catalog_bytes = $num_stars * 18;
     my $catalog_buf;
-    my $catalog_bytes = $num_stars * 12;
     read($fh, $catalog_buf, $catalog_bytes) == $catalog_bytes or die "Short read on star catalog";
-    
-    my $PI = 3.1415926535897932;
+    close($fh);
+
+    my $mas_to_rad = $PI / (180.0 * 3600000.0);
+    my @stars;
     for (my $i = 0; $i < $num_stars; $i++) {
-        my $star_entry = substr($catalog_buf, $i * 12, 12);
-        my ($hip, $ra_q, $dec_q, $mag_q, $ra_lo, $dec_lo, $coordinate_format) = unpack("V v v C C C C", $star_entry);
-        # Byte 11 tags coordinates; zero low bytes are valid in the 24-bit format.
-        die "Invalid coordinate format in catalog record $i"
-            if $coordinate_format > 1 || ($coordinate_format == 0 && ($ra_lo || $dec_lo));
-        
-        my $ra = ($coordinate_format == 1) ? (($ra_q * 256.0 + $ra_lo) * (2.0 * $PI) / 16777215.0)
-                                     : ($ra_q * (2.0 * $PI) / 65535.0);
-        my $dec = ($coordinate_format == 1) ? (($dec_q * 256.0 + $dec_lo) * $PI / 16777215.0 - $PI / 2.0)
-                                      : ($dec_q * $PI / 65535.0 - $PI / 2.0);
-        my $mag = $mag_q * 10.0 / 255.0 - 2.0;
-        
+        my $entry = substr($catalog_buf, $i * 18, 18);
+        my ($hip, $ra_q, $dec_q, $mag_q, $pm_ra_q, $pm_dec_q) = unpack("l< V V s< s< s<", $entry);
         push @stars, {
-            id   => $i,
-            hip  => $hip,
-            name => "Unknown",
-            ra   => $ra,
-            dec  => $dec,
-            mag  => $mag
+            id     => $i,
+            hip    => $hip,
+            name   => "Unknown",
+            ra     => $ra_q * (2.0 * $PI) / 4294967295.0,
+            dec    => $dec_q * $PI / 4294967295.0 - $PI / 2.0,
+            mag    => $mag_q * 1e-3,
+            pm_ra  => $pm_ra_q * 0.2 * $mas_to_rad,
+            pm_dec => $pm_dec_q * 0.2 * $mas_to_rad,
         };
     }
-    close($fh);
-    
+
     print "Loaded " . scalar(@stars) . " catalog stars.\n";
-    
+
     my $ra_deg = 80.0;
     my $dec_deg = 37.7749;
     my $roll_deg = 0.0;
     my $fov_deg = 12.0;
     my $width = 1024;
     my $height = 1024;
-    
-    my $ra_rad = $ra_deg * 3.1415926535897932 / 180.0;
-    my $dec_rad = $dec_deg * 3.1415926535897932 / 180.0;
-    my $roll_rad = $roll_deg * 3.1415926535897932 / 180.0;
-    my $fov_rad = $fov_deg * 3.1415926535897932 / 180.0;
-    
+
+    my $ra_rad = $ra_deg * $PI / 180.0;
+    my $dec_rad = $dec_deg * $PI / 180.0;
+    my $roll_rad = $roll_deg * $PI / 180.0;
+    my $fov_rad = $fov_deg * $PI / 180.0;
+
     print "Simulating camera pointing:\n";
     print "  RA = $ra_deg deg, Dec = $dec_deg deg, Roll = $roll_deg deg\n";
     print "  FOV = $fov_deg deg, Sensor = ${width}x${height} pixels\n";
-    
+
     my ($x_cam, $y_cam, $z_cam) = get_camera_rotation_matrix($ra_rad, $dec_rad, $roll_rad);
-    my $focal_length = $width / (2.0 * tax($fov_rad / 2.0));
-    
-    # helper for tan since Perl has no core tan
-    sub tax {
-        my $val = shift;
-        return sin($val) / cos($val);
-    }
-    
+    my $focal_length = $width / (2.0 * tan_rad($fov_rad / 2.0));
+
     my $year = 1900.0 + (gmtime)[5] + (gmtime)[7] / 365.25;
-    my $T = ($year - 2000.0) / 100.0;
-    my $PI = 3.1415926535897932;
-    my $zeta = 2306.2181 * $T * $PI / (3600.0 * 180.0);
-    my $z = 2306.2181 * $T * $PI / (3600.0 * 180.0);
-    my $theta = 2004.3109 * $T * $PI / (3600.0 * 180.0);
-    
-    my $c_zeta = cos($zeta); my $s_zeta = sin($zeta);
-    my $c_z = cos($z); my $s_z = sin($z);
-    my $c_th = cos($theta); my $s_th = sin($theta);
-    
-    my $P00 = $c_zeta * $c_th * $c_z - $s_zeta * $s_z;
-    my $P01 = -$s_zeta * $c_th * $c_z - $c_zeta * $s_z;
-    my $P02 = -$s_th * $c_z;
-    my $P10 = $c_zeta * $c_th * $s_z + $s_zeta * $c_z;
-    my $P11 = -$s_zeta * $c_th * $s_z + $c_zeta * $c_z;
-    my $P12 = -$s_th * $s_z;
-    my $P20 = $c_zeta * $s_th;
-    my $P21 = -$s_zeta * $s_th;
-    my $P22 = $c_th;
-    
+    my $dt_yr = $year - 2000.0;
+    my ($P, $aberr) = astrometry_frame($year);
+
     my @visible_stars;
     my $idx = 0;
     foreach my $star (@stars) {
-        my $ra_s = $star->{ra};
-        my $dec_s = $star->{dec};
-        
-        my $v0_0 = cos($dec_s) * cos($ra_s);
-        my $v0_1 = cos($dec_s) * sin($ra_s);
-        my $v0_2 = sin($dec_s);
-        
-        my $v_star = [
-            $P00 * $v0_0 + $P01 * $v0_1 + $P02 * $v0_2,
-            $P10 * $v0_0 + $P11 * $v0_1 + $P12 * $v0_2,
-            $P20 * $v0_0 + $P21 * $v0_1 + $P22 * $v0_2
-        ];
-        
-        # dot product for rotation projection
-        my $x_c = $x_cam->[0]*$v_star->[0] + $x_cam->[1]*$v_star->[1] + $x_cam->[2]*$v_star->[2];
-        my $y_c = $y_cam->[0]*$v_star->[0] + $y_cam->[1]*$v_star->[1] + $y_cam->[2]*$v_star->[2];
-        my $z_c = $z_cam->[0]*$v_star->[0] + $z_cam->[1]*$v_star->[1] + $z_cam->[2]*$v_star->[2];
-        
-        if ($z_c > 0) {
-            my $x_sensor = $x_c / $z_c;
-            my $y_sensor = $y_c / $z_c;
-            
-            my $u = $width / 2.0 + $focal_length * $x_sensor;
-            my $v = $height / 2.0 + $focal_length * $y_sensor;
-            
-            if ($u >= 0 && $u < $width && $v >= 0 && $v < $height) {
+        my ($ra0, $dec0) = ($star->{ra}, $star->{dec});
+        my ($ca, $sa) = (cos($ra0), sin($ra0));
+        my ($cd, $sd) = (cos($dec0), sin($dec0));
+        my $pm_a = $star->{pm_ra} * $dt_yr;
+        my $pm_d = $star->{pm_dec} * $dt_yr;
+        my @r0 = (
+            $cd * $ca - $sa * $pm_a - $sd * $ca * $pm_d,
+            $cd * $sa + $ca * $pm_a - $sd * $sa * $pm_d,
+            $sd + $cd * $pm_d,
+        );
+        my $r0_norm = sqrt($r0[0] * $r0[0] + $r0[1] * $r0[1] + $r0[2] * $r0[2]);
+        @r0 = map { $_ / $r0_norm } @r0 if $r0_norm > 0.0;
+
+        my @v_star = map {
+            $P->[$_][0] * $r0[0] + $P->[$_][1] * $r0[1] + $P->[$_][2] * $r0[2] + $aberr->[$_]
+        } 0 .. 2;
+        my $v_norm = sqrt($v_star[0] * $v_star[0] + $v_star[1] * $v_star[1] + $v_star[2] * $v_star[2]);
+        @v_star = map { $_ / $v_norm } @v_star if $v_norm > 0.0;
+
+        my $x_c = $x_cam->[0] * $v_star[0] + $x_cam->[1] * $v_star[1] + $x_cam->[2] * $v_star[2];
+        my $y_c = $y_cam->[0] * $v_star[0] + $y_cam->[1] * $v_star[1] + $y_cam->[2] * $v_star[2];
+        my $z_c = $z_cam->[0] * $v_star[0] + $z_cam->[1] * $v_star[1] + $z_cam->[2] * $v_star[2];
+
+        if ($z_c > 0.0) {
+            my $u = $width / 2.0 + $focal_length * ($x_c / $z_c);
+            my $v = $height / 2.0 + $focal_length * ($y_c / $z_c);
+            if ($u >= 0.0 && $u < $width && $v >= 0.0 && $v < $height) {
                 push @visible_stars, {
                     db_index => $idx,
-                    id => $star->{id},
-                    hip => $star->{hip},
-                    name => $star->{name} || "Unknown",
-                    mag => $star->{mag},
-                    u_true => $u,
-                    v_true => $v
+                    id       => $star->{id},
+                    hip      => $star->{hip},
+                    name     => $star->{name},
+                    mag      => $star->{mag},
+                    u_true   => $u,
+                    v_true   => $v,
                 };
             }
         }
         $idx++;
     }
-    
+
+    @visible_stars = sort { $a->{mag} <=> $b->{mag} } @visible_stars;
     print "Found " . scalar(@visible_stars) . " visible stars in camera view.\n";
-    
-    # save mock centroids to JSON
+
     open(my $cfh, '>', $centroids_path) or die "Cannot write centroids: $!";
     print $cfh encode_json(\@visible_stars);
     close($cfh);
     print "Saved true visible star list to $centroids_path\n";
-    
-    # render mock image
+
     print "Rendering mock star field image...\n";
-    
-    # allocate flat 1D image array
     my @img = (0) x ($width * $height);
-    
+
     foreach my $star (@visible_stars) {
-        my $u = $star->{u_true};
-        my $v = $star->{v_true};
-        my $mag = $star->{mag};
-        
-        my $r = 6.0 - $mag;
-        $r = int($r + 0.5);
-        if ($r < 1) { $r = 1; }
-        
-        my $peak_intensity = int(255.0 * (10.0 ** (-0.4 * ($mag - 1.0))) + 0.5);
-        if ($peak_intensity < 80) { $peak_intensity = 80; }
-        if ($peak_intensity > 255) { $peak_intensity = 255; }
-        
+        my ($u, $v, $mag) = ($star->{u_true}, $star->{v_true}, $star->{mag});
+        my $r = 3;
+        my $sigma = 1.0;
+
+        my $peak_intensity = 240.0 * (10.0 ** (-0.20 * ($mag - 1.0)));
+        $peak_intensity = 45.0 if $peak_intensity < 45.0;
+        $peak_intensity = 240.0 if $peak_intensity > 240.0;
+
+        my $cu = int($u + 0.5);
+        my $cv = int($v + 0.5);
         for (my $y_offset = -$r; $y_offset <= $r; $y_offset++) {
             for (my $x_offset = -$r; $x_offset <= $r; $x_offset++) {
-                my $dist_sq = $x_offset**2 + $y_offset**2;
-                if ($dist_sq <= $r**2) {
-                    my $pu = int($u + $x_offset + 0.5);
-                    my $pv = int($v + $y_offset + 0.5);
-                    if ($pu >= 0 && $pu < $width && $pv >= 0 && $pv < $height) {
-                        my $sigma = ($r > 1) ? ($r / 2.0) : 0.5;
-                        my $factor = exp(-$dist_sq / (2.0 * $sigma**2));
-                        my $val = int($peak_intensity * $factor + 0.5);
-                        
-                        my $px_idx = $pv * $width + $pu;
-                        $img[$px_idx] += $val;
-                        if ($img[$px_idx] > 255) { $img[$px_idx] = 255; }
-                    }
+                my $pu = $cu + $x_offset;
+                my $pv = $cv + $y_offset;
+                if ($pu >= 0 && $pu < $width && $pv >= 0 && $pv < $height) {
+                    my $dist_sq = ($pu - $u)**2 + ($pv - $v)**2;
+                    my $val = int($peak_intensity * exp(-$dist_sq / (2.0 * $sigma**2)) + 0.5);
+                    my $px_idx = $pv * $width + $pu;
+                    $img[$px_idx] += $val;
+                    $img[$px_idx] = 255 if $img[$px_idx] > 255;
                 }
             }
         }
     }
-    
-    # add background and Gaussian noise (reduce std from 4 to 0.5 for sub-pixel precision)
-    srand(42); # fix seed for reproducibility
+
+    srand(42);
     for (my $i = 0; $i < $width * $height; $i++) {
-        my $noise = rand_normal(15, 0.5);
-        my $val = int($img[$i] + $noise + 0.5);
-        if ($val < 0) { $val = 0; }
-        if ($val > 255) { $val = 255; }
+        my $val = int($img[$i] + rand_normal(15, 0.5) + 0.5);
+        $val = 0 if $val < 0;
+        $val = 255 if $val > 255;
         $img[$i] = $val;
     }
-    
-    # save as PGM (P5 binary format)
+
     open(my $ifh, '>:raw', $image_path) or die "Cannot write image: $!";
     print $ifh "P5\n$width $height\n255\n";
-    my $packed = pack("C*", @img);
-    print $ifh $packed;
+    print $ifh pack("C*", @img);
     close($ifh);
     print "Saved rendered noisy star field image to $image_path\n";
 }

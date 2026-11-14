@@ -63,7 +63,7 @@ sub set_all_mtime {
     for my $name ('core.c', 'navigation.c') {
         write_text(File::Spec->catfile($temp, $name), $name);
     }
-    for my $name ('main', 'camera', 'bno055', 'sim', 'camera_mock', 'bno055_mock', 'trail_preprocessor') {
+    for my $name ('main', 'camera', 'bno055', 'sim', 'camera_mock', 'bno055_mock') {
         write_text(File::Spec->catfile($prototype, "$name.c"), $name);
     }
 

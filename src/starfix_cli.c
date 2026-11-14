@@ -12,7 +12,7 @@
 #include "starfix_identify.h"
 #include "starfix_photo.h"
 
-static uint8_t mempool[10 * 1024 * 1024];
+static uint8_t mempool[65536];
 
 static int numeric_argument(const char* text, const char* end) {
     if (end && !*end) return 1;
@@ -73,9 +73,8 @@ static int do_identify(int width, int height, double fov_deg, double observation
     printf("Using top %d brightest centroids for pattern matching...\n",
            (cent_count < 12) ? cent_count : 12);
     starfix_match_t matches[20];
-    starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
     int match_count = starfix_identify_stars(cent_count, centroids, width, height, fov_deg, &db, 20,
-                                             matches, arena, NULL);
+                                             matches, NULL);
 
     if (match_count < 0) {
         printf("Identification failed with code %d\n", match_count);
@@ -85,8 +84,7 @@ static int do_identify(int width, int height, double fov_deg, double observation
     printf("Identified Stars:\n");
     printf("Centroid Index  | HIP ID     | RA (deg)   | Dec (deg)\n");
     printf("-----------------------------------------------------\n");
-    int i;
-    for (i = 0; i < match_count; i++) {
+    for (int i = 0; i < match_count; i++) {
         int c_idx = matches[i].centroid_idx;
         int cat_idx = matches[i].catalog_idx;
         printf("%-15d | %-10d | %10.4f | %10.4f\n", c_idx, db.stars[cat_idx].hip,
@@ -169,6 +167,21 @@ done:
     return result;
 }
 
+static double eval_sweep_fov(int cent_count, const starfix_centroid_t* centroids,
+                             const starfix_db_t* db, int match_count,
+                             const starfix_match_t* matches, const starfix_photo_options_t* base,
+                             double fov_deg, uint32_t min_inliers, starfix_arena_t arena,
+                             starfix_photo_result_t* out_fit) {
+    starfix_photo_options_t opt = *base;
+    opt.fov_deg = fov_deg;
+    if (starfix_solve_photo(cent_count, centroids, db->num_stars, db->stars, match_count, matches,
+                            &opt, out_fit, arena) != STARFIX_SUCCESS ||
+        out_fit->inliers < min_inliers) {
+        return HUGE_VAL;
+    }
+    return out_fit->rms_pixels;
+}
+
 static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
     starfix_db_t db = {0};
     int result = 1;
@@ -195,7 +208,7 @@ static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
         opt.fov_deg = low_search + i * step;
         starfix_match_t matches[20];
         int match_count = starfix_identify_stars(cent_count, centroids, opt.width, opt.height,
-                                                 opt.fov_deg, &db, 20, matches, arena, NULL);
+                                                 opt.fov_deg, &db, 20, matches, NULL);
         if (match_count < 3) continue;
         starfix_photo_result_t fit;
         if (starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars, match_count, matches,
@@ -211,6 +224,7 @@ static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
     }
     if (best_match_count == 0) goto done;
 
+    uint32_t target_inliers = best_fit.inliers;
     double half_width = fmax(step, best_fov * 0.025);
     double low = fmax(1.0, best_fov - half_width);
     double high = fmin(100.0, best_fov + half_width);
@@ -218,17 +232,10 @@ static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
     double x1 = high - ratio * (high - low);
     double x2 = low + ratio * (high - low);
     starfix_photo_result_t fit1 = {0}, fit2 = {0};
-    starfix_photo_options_t opt1 = *base, opt2 = *base;
-    opt1.fov_deg = x1;
-    opt2.fov_deg = x2;
-    double rms1 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
-                                      best_match_count, best_matches, &opt1, &fit1, arena) == 0
-                      ? fit1.rms_pixels
-                      : HUGE_VAL;
-    double rms2 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
-                                      best_match_count, best_matches, &opt2, &fit2, arena) == 0
-                      ? fit2.rms_pixels
-                      : HUGE_VAL;
+    double rms1 = eval_sweep_fov(cent_count, centroids, &db, best_match_count, best_matches, base,
+                                 x1, target_inliers, arena, &fit1);
+    double rms2 = eval_sweep_fov(cent_count, centroids, &db, best_match_count, best_matches, base,
+                                 x2, target_inliers, arena, &fit2);
     for (int iter = 0; iter < 18; iter++) {
         if (rms1 <= rms2) {
             high = x2;
@@ -236,22 +243,16 @@ static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
             fit2 = fit1;
             rms2 = rms1;
             x1 = high - ratio * (high - low);
-            opt1.fov_deg = x1;
-            rms1 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
-                                       best_match_count, best_matches, &opt1, &fit1, arena) == 0
-                       ? fit1.rms_pixels
-                       : HUGE_VAL;
+            rms1 = eval_sweep_fov(cent_count, centroids, &db, best_match_count, best_matches, base,
+                                  x1, target_inliers, arena, &fit1);
         } else {
             low = x1;
             x1 = x2;
             fit1 = fit2;
             rms1 = rms2;
             x2 = low + ratio * (high - low);
-            opt2.fov_deg = x2;
-            rms2 = starfix_solve_photo(cent_count, centroids, db.num_stars, db.stars,
-                                       best_match_count, best_matches, &opt2, &fit2, arena) == 0
-                       ? fit2.rms_pixels
-                       : HUGE_VAL;
+            rms2 = eval_sweep_fov(cent_count, centroids, &db, best_match_count, best_matches, base,
+                                  x2, target_inliers, arena, &fit2);
         }
     }
     if (rms1 < best_fit.rms_pixels) {
@@ -266,7 +267,7 @@ static int do_sweep_photo(const starfix_photo_options_t* base, double year) {
                               db.stars) < 0)
         goto done;
     printf("SOLVED_FOV: %.9f\n", best_fov);
-    print_solution(&best_fit, 1);
+    print_solution(&best_fit, 0);
     result = 0;
 done:
     starfix_free_db(&db);
@@ -284,8 +285,11 @@ int main(int argc, char** argv) {
         printf("  --fit-photo <g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size]\n");
         printf("                   Fit photo attitude using a measured camera zenith\n");
         printf(
-            "  --solve-photo    Solve terrestrial position from a real photo (uses: <gha_aries> "
-            "<g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size])\n");
+            "  --solve-photo    Solve terrestrial position from matched centroids (uses: "
+            "<gha_aries> <g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size])\n");
+        printf(
+            "  --sweep-photo    Sweep FOV, identify stars, and solve terrestrial position "
+            "(uses: <gha_aries> <g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size])\n");
         return 1;
     }
 
@@ -314,7 +318,7 @@ int main(int argc, char** argv) {
     } else if (strcmp(argv[1], "--solve-photo") == 0 || strcmp(argv[1], "--fit-photo") == 0 ||
                strcmp(argv[1], "--sweep-photo") == 0) {
         int sweep = strcmp(argv[1], "--sweep-photo") == 0;
-        int attitude_only = sweep || strcmp(argv[1], "--fit-photo") == 0;
+        int attitude_only = strcmp(argv[1], "--fit-photo") == 0;
         int first = attitude_only ? 2 : 3;
         if (argc < first + 3 || argc > first + 6) {
             printf("Usage: %s %s %s<g_x> <g_y> <g_z> [fov_deg] [observation_year] [crop_size]\n",

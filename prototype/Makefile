@@ -12,9 +12,9 @@ SIM_TARGET = starfix_prototype_sim
 
 LIBS = ../libstarfix.a ../libstarfix_navigation.a
 
-.PHONY: all sim preprocessor check clean libraries
+.PHONY: all sim check clean libraries
 
-all: $(TARGET) $(SIM_TARGET) trail_preprocessor
+all: $(TARGET) $(SIM_TARGET)
 
 libraries:
 	$(MAKE) -C .. libstarfix.a libstarfix_navigation.a
@@ -33,11 +33,6 @@ $(SIM_TARGET): $(SIM_OBJS) $(LIBS)
 sim: $(SIM_TARGET)
 	./$(SIM_TARGET)
 
-trail_preprocessor: trail_preprocessor.o
-	$(CC) trail_preprocessor.o -o trail_preprocessor $(LDFLAGS)
-
-preprocessor: trail_preprocessor
-
 test_camera: test_camera.o
 	$(CC) test_camera.o -o $@ $(LDFLAGS)
 
@@ -51,4 +46,4 @@ check: test_camera
 -include *.d
 
 clean:
-	rm -f $(HW_OBJS) $(SIM_OBJS) trail_preprocessor.o test_camera.o *.d $(TARGET) $(SIM_TARGET) trail_preprocessor test_camera
+	rm -f $(HW_OBJS) $(SIM_OBJS) test_camera.o *.d $(TARGET) $(SIM_TARGET) test_camera bodega_to_marquesas.tsv bodega_to_marquesas.nmea

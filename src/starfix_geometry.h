@@ -11,6 +11,19 @@ typedef struct {
     double x, y, z;
 } starfix_vector3_t;
 
+static inline double starfix_deg_to_rad(double deg) { return deg * (M_PI / 180.0); }
+
+static inline double starfix_rad_to_deg(double rad) { return rad * (180.0 / M_PI); }
+
+/* preserve both endpoints: -180 stays -180 and +180 stays +180 */
+static inline double starfix_wrap_deg(double deg) {
+    if (!isfinite(deg)) return deg;
+    deg = fmod(deg, 360.0);
+    if (deg > 180.0) deg -= 360.0;
+    if (deg < -180.0) deg += 360.0;
+    return deg;
+}
+
 static inline double starfix_dot(starfix_vector3_t a, starfix_vector3_t b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }

@@ -4,14 +4,13 @@ CC = gcc
 AR = ar
 CPPFLAGS = -Isrc -Itools
 CFLAGS = -std=c99 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wfloat-equal -Werror -O2
-DEPS_CFLAGS = -Wall -O2
 LDFLAGS = -lm
 
 .PHONY: all tests simulations navigation indent check clean demo lint db
 
 CORE_SRCS = src/starfix_photo.c src/starfix_centroid.c src/starfix_identify.c src/starfix_attitude.c src/starfix_solver.c src/starfix_astrometry.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
-NAV_OBJS = src/starfix_ekf.o src/starfix_graph.o src/starfix_nmea.o nanoqsp.o nanoqsp_blas.o
+NAV_OBJS = src/starfix_ekf.o src/starfix_graph.o src/starfix_nmea.o
 TESTS = t/test_contracts t/test_cli_io t/test_photo t/test_ekf t/test_solver t/test_centroid t/test_attitude t/test_graph t/test_identify
 
 all: starfix_cli
@@ -33,12 +32,6 @@ libstarfix_navigation.a: $(NAV_OBJS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 -include src/*.d tools/*.d examples/*.d
-
-nanoqsp.o: deps/nanoqsp/nanoqsp.c
-	$(CC) $(DEPS_CFLAGS) -c $< -o $@
-
-nanoqsp_blas.o: deps/nanoqsp/nanoqsp_blas.c
-	$(CC) $(DEPS_CFLAGS) -c $< -o $@
 
 t/test_contracts: src/test_contracts.o libstarfix.a libstarfix_navigation.a
 	$(CC) $^ -o $@ $(LDFLAGS)
@@ -69,7 +62,7 @@ indent:
 
 lint:
 	cppcheck --enable=all --suppress=missingIncludeSystem src/*.c src/*.h
-	clang-tidy src/*.c src/*.h -- -Isrc
+	clang-tidy src/*.c src/*.h -- -Isrc -Itools
 
 check: tests simulations
 	$(MAKE) -C prototype check

@@ -270,4 +270,31 @@ my $PI = 3.14159265358979323846;
     is($final_bytes, $original_bytes, 'solve_photo.pl does not modify source JPEG');
 }
 
+# test 8: write_jpeg_exif replaces existing APP1 EXIF rather than duplicating it
+{
+    my $directory = tempdir('starfix-exif-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+    my $jpg_path = File::Spec->catfile($directory, 'rewrite.jpg');
+    my $im_cmd = photo_common::find_im_command();
+    system($im_cmd, '-size', '64x64', 'xc:black', $jpg_path) == 0
+        or die "failed to create test JPEG\n";
+
+    photo_common::write_jpeg_exif(
+        $jpg_path,
+        { '0th' => { $photo_common::TAG_USER_COMMENT => 'first' }, 'Exif' => {} }
+    );
+    photo_common::write_jpeg_exif(
+        $jpg_path,
+        { '0th' => { $photo_common::TAG_USER_COMMENT => 'second' }, 'Exif' => {} }
+    );
+
+    my $reloaded = photo_common::load_exif($jpg_path);
+    is($reloaded->{'0th'}{$photo_common::TAG_USER_COMMENT}, "ASCII\x00\x00\x00second", 'overwritten EXIF reads new value');
+
+    open(my $jfh, '<:raw', $jpg_path) or die $!;
+    my $jpeg_bytes = do { local $/; <$jfh> };
+    close($jfh);
+    my $exif_headers = () = ($jpeg_bytes =~ /\xFF\xE1..Exif\x00\x00/sg);
+    is($exif_headers, 1, 'JPEG has exactly one APP1 EXIF segment after rewrite');
+}
+
 done_testing();

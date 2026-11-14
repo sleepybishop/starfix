@@ -1,5 +1,6 @@
 use strict;
 use warnings;
+use File::Temp qw(tempdir);
 use Test::More;
 
 {
@@ -88,10 +89,12 @@ use Test::More;
 
 # Test 7: Prototype REQUIEM-SOPAC Passage Simulator
 {
-    my $output = `./prototype/starfix_prototype_sim 2>&1`;
+    my $sim_dir = tempdir('starfix-sim-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+    my $prefix = "$sim_dir/bodega_to_marquesas";
+    my $output = `./prototype/starfix_prototype_sim "$prefix" 2>&1`;
     ok($? == 0, "Prototype simulator returned success") or diag($output);
-    ok($output =~ /Saved Marquesas TSV  : prototype\/bodega_to_marquesas\.tsv/, "Bodega Bay to Marquesas TSV written");
-    ok(-s "prototype/bodega_to_marquesas.tsv", "bodega_to_marquesas.tsv is non-empty");
+    ok($output =~ /Saved Marquesas TSV  : \Q$prefix\E\.tsv/, "Bodega Bay to Marquesas TSV written");
+    ok(-s "$prefix.tsv" && -s "$prefix.nmea", "bodega_to_marquesas TSV and NMEA outputs are non-empty");
 }
 
 done_testing();

@@ -6,7 +6,7 @@
 #include "starfix_graph.h"
 #include "starfix_status.h"
 
-static uint8_t mempool[10 * 1024 * 1024];
+static uint8_t mempool[256 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 
 #ifndef M_PI
@@ -132,7 +132,7 @@ int main(void) {
         printf("FAILED (solver returned %d)\n", status);
     }
 
-    /* a stationary 200-node graph fits in 1 MiB and preserves its initial pose */
+    /* a stationary 200-node graph fits in 64 KB and preserves its initial pose */
     printf("Test 3: Bounded arena use for larger graph... ");
     int large_nodes = 200;
     starfix_odometry_t* large_odom =
@@ -144,7 +144,7 @@ int main(void) {
     int large_status = STARFIX_ERR_MEMORY;
     int stationary = 1;
     if (large_odom != NULL && large_poses != NULL) {
-        starfix_arena_t small = {mempool, mempool + 1024 * 1024};
+        starfix_arena_t small = {mempool, mempool + 64 * 1024};
         large_status = starfix_solve_graph(large_nodes, 1, dt_sec, init_lat, init_lon, large_odom,
                                            0, NULL, large_poses, &large_scale, &large_bias, small);
         if (large_status == STARFIX_SUCCESS) {
@@ -178,6 +178,42 @@ int main(void) {
     } else {
         failures++;
         printf("FAILED (status=%d, lon=%f)\n", cross_status, cross_poses[1].lon);
+    }
+
+    printf("Test 5: High-latitude metric factor graph calibration... ");
+    double hi_lat = 65.0, hi_lon = -20.0;
+    cur_lat = hi_lat;
+    cur_lon = hi_lon;
+    true_lats[0] = hi_lat;
+    true_lons[0] = hi_lon;
+    for (i = 1; i <= num_nodes; i++) {
+        int j;
+        for (j = 0; j < steps_per_node; j++) {
+            int s_idx = (i - 1) * steps_per_node + j;
+            double current_heading = (s_idx < total_steps / 2) ? 45.0 : 135.0;
+            double dist_nm = true_speed * dt_sec / 3600.0;
+            double lat_rad = cur_lat * M_PI / 180.0;
+            cur_lat += dist_nm * cos(current_heading * M_PI / 180.0) / 60.0;
+            cur_lon += dist_nm * sin(current_heading * M_PI / 180.0) / (60.0 * cos(lat_rad));
+        }
+        true_lats[i] = cur_lat;
+        true_lons[i] = cur_lon;
+    }
+    for (i = 0; i < num_fixes; i++) {
+        fixes[i].node_idx = (i + 1) * 2;
+        fixes[i].lat = true_lats[(i + 1) * 2];
+        fixes[i].lon = true_lons[(i + 1) * 2];
+    }
+    double hi_scale = 1.0, hi_bias = 0.0;
+    int hi_status = starfix_solve_graph(num_nodes, steps_per_node, dt_sec, hi_lat, hi_lon, odom,
+                                        num_fixes, fixes, poses, &hi_scale, &hi_bias, arena);
+    if (hi_status == STARFIX_SUCCESS && fabs(hi_scale - true_scale) < 0.02 &&
+        fabs(hi_bias - true_bias) * 180.0 / M_PI < 0.25) {
+        printf("Passed\n");
+    } else {
+        failures++;
+        printf("FAILED (status=%d, scale=%f, bias=%f)\n", hi_status, hi_scale,
+               hi_bias * 180.0 / M_PI);
     }
 
     free(odom);

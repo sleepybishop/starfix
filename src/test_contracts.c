@@ -40,6 +40,26 @@ int main(void) {
     check(starfix_correct_refraction(1, NULL, stars, 10, 1010) == STARFIX_ERR_NULL_POINTER &&
               starfix_correct_refraction(0, stars, stars, 10, 1010) == STARFIX_ERR_INVALID_PARAM,
           "refraction pointer and count errors");
+    starfix_vector3_t ref_ray = {0.0, 0.0, 1.0};
+    starfix_vector3_t ref_before = ref_ray;
+    starfix_vector3_t zero_zenith = {0.0, 0.0, 0.0};
+    check(starfix_correct_refraction(1, &ref_ray, &zero_zenith, 10, 1010) ==
+                  STARFIX_ERR_INVALID_PARAM &&
+              starfix_correct_refraction(1, &ref_ray, &ref_before, -273.15, 1010) ==
+                  STARFIX_ERR_INVALID_PARAM &&
+              starfix_correct_refraction(1, &ref_ray, &ref_before, 10, -1.0) ==
+                  STARFIX_ERR_INVALID_PARAM &&
+              starfix_correct_refraction(1, &ref_ray, &ref_before, NAN, 1010) ==
+                  STARFIX_ERR_INVALID_PARAM &&
+              memcmp(&ref_ray, &ref_before, sizeof(ref_ray)) == 0,
+          "refraction domain errors preserve input rays");
+    starfix_vector3_t bad_rays[2] = {{0.0, 0.2, 0.9797958971}, {NAN, 0.0, 1.0}};
+    starfix_vector3_t bad_rays_copy[2];
+    memcpy(bad_rays_copy, bad_rays, sizeof(bad_rays));
+    check(starfix_correct_refraction(2, bad_rays, &ref_before, 10, 1010) ==
+                  STARFIX_ERR_DATA_CORRUPTION &&
+              memcmp(bad_rays, bad_rays_copy, sizeof(bad_rays)) == 0,
+          "refraction nonfinite ray rejected atomically");
 
     starfix_db_t db = {0};
     check(starfix_load_db("/dev/null/starfix.bin", &db) == STARFIX_ERR_IO && !db.stars &&
@@ -52,25 +72,25 @@ int main(void) {
     db.num_stars = 5;
     starfix_match_t matches[5];
     starfix_arena_t scratch = {0};
-    check(starfix_identify_stars(2, centroids, 10, 10, 10, &db, 5, matches, scratch, NULL) ==
+    check(starfix_identify_stars(2, centroids, 10, 10, 10, &db, 5, matches, NULL) ==
                   STARFIX_ERR_INVALID_PARAM &&
-              starfix_identify_stars(5, centroids, 10, 10, 10, &db, 2, matches, scratch, NULL) ==
+              starfix_identify_stars(5, centroids, 10, 10, 10, &db, 2, matches, NULL) ==
                   STARFIX_ERR_INVALID_PARAM,
           "identification input and output capacity");
-    check(starfix_identify_stars(3, centroids, 10, 10, 10, &db, 5, matches, scratch, NULL) ==
+    check(starfix_identify_stars(3, centroids, 10, 10, 10, &db, 5, matches, NULL) ==
                   STARFIX_ERR_IDENTIFY_NO_MATCH &&
-              starfix_identify_stars(4, centroids, 10, 10, 10, &db, 5, matches, scratch, NULL) ==
+              starfix_identify_stars(4, centroids, 10, 10, 10, &db, 5, matches, NULL) ==
                   STARFIX_ERR_IDENTIFY_NO_MATCH,
           "blind identification requires an independent fifth star");
-    check(starfix_identify_stars(5, centroids, 10, 10, 10, &db, 5, matches, scratch, NULL) ==
+    check(starfix_identify_stars(5, centroids, 10, 10, 10, &db, 5, matches, NULL) ==
               STARFIX_ERR_NULL_POINTER,
           "blind identification requires hashes");
     centroids[0].u = NAN;
-    check(starfix_identify_stars(5, centroids, 10, 10, 10, &db, 5, matches, scratch, NULL) ==
+    check(starfix_identify_stars(5, centroids, 10, 10, 10, &db, 5, matches, NULL) ==
               STARFIX_ERR_DATA_CORRUPTION,
           "nonfinite centroid rejected before hashing");
     centroids[0].u = DBL_MAX;
-    check(starfix_identify_stars(5, centroids, 1, 1, 179, &db, 5, matches, scratch, NULL) ==
+    check(starfix_identify_stars(5, centroids, 1, 1, 179, &db, 5, matches, NULL) ==
               STARFIX_ERR_DATA_CORRUPTION,
           "projection overflow rejected before hashing");
     check(starfix_propagate_astrometry(catalog, 0, 2026) == STARFIX_ERR_INVALID_PARAM &&

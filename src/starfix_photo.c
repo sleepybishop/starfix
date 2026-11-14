@@ -31,29 +31,40 @@ starfix_status_t starfix_solve_photo(int num_centroids, const starfix_centroid_t
             return STARFIX_ERR_DATA_CORRUPTION;
         camera[i] = starfix_camera_ray(centroids[ci].u - options->width / 2.0,
                                        centroids[ci].v - options->height / 2.0, focal);
-        double ra = catalog[si].ra, dec = catalog[si].dec;
-        if (!isfinite(ra) || !isfinite(dec)) return STARFIX_ERR_DATA_CORRUPTION;
-        celestial[i] = starfix_celestial_ray(ra, dec);
+        starfix_vector3_t v = catalog[si].unit;
+        if (!isfinite(v.x) || !isfinite(v.y) || !isfinite(v.z) ||
+            hypot(hypot(v.x, v.y), v.z) < 1e-6)
+            return STARFIX_ERR_DATA_CORRUPTION;
+        celestial[i] = v;
     }
 
-    /* A measured zenith permits refraction correction before the single attitude fit. */
+    /* measured zenith permits refraction correction before the consensus attitude fit */
     starfix_status_t status = starfix_correct_refraction(num_matches, camera, zenith, 10.0, 1010.0);
     if (status != STARFIX_SUCCESS) return status;
+
+    double threshold_deg = fmin(2.0, fmax(1e-3, starfix_rad_to_deg(atan(5.0 / focal))));
+    double cos_threshold = cos(starfix_deg_to_rad(threshold_deg));
+
     starfix_photo_result_t fitted = {0};
-    int inliers =
-        starfix_solve_attitude_ransac(num_matches, camera, celestial, 0.25, fitted.rotation, arena);
+    int inliers = starfix_solve_attitude_ransac(num_matches, camera, celestial, threshold_deg,
+                                                fitted.rotation, arena);
     if (inliers < 0) return inliers;
-    double sum_sq = 0;
+
+    double sum_sq = 0.0;
+    int inlier_count = 0;
     for (int i = 0; i < num_matches; i++) {
         starfix_vector3_t projected =
             starfix_rotate((const double (*)[3])fitted.rotation, celestial[i]);
-        if (projected.z <= 0 || camera[i].z <= 0) return STARFIX_ERR_ATTITUDE_DEGENERATE;
+        if (starfix_dot(projected, camera[i]) < cos_threshold) continue;
+        if (projected.z <= 0.0 || camera[i].z <= 0.0) return STARFIX_ERR_ATTITUDE_DEGENERATE;
         double du = focal * (projected.x / projected.z - camera[i].x / camera[i].z);
         double dv = focal * (projected.y / projected.z - camera[i].y / camera[i].z);
         sum_sq += du * du + dv * dv;
+        inlier_count++;
     }
-    fitted.rms_pixels = sqrt(sum_sq / (double)num_matches);
-    fitted.inliers = (uint32_t)inliers;
+    if (inlier_count == 0) return STARFIX_ERR_RANSAC_INSUFFICIENT_INLIERS;
+    fitted.rms_pixels = sqrt(sum_sq / (double)inlier_count);
+    fitted.inliers = (uint32_t)inlier_count;
     fitted.matches = num_matches;
     if (!isfinite(fitted.rms_pixels) || fitted.rms_pixels > 3.0 || fitted.inliers < 3 ||
         (double)fitted.inliers / (double)num_matches < 0.6)

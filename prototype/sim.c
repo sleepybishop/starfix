@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "../src/starfix_arena.h"
+#include "../src/starfix_astrometry.h"
 #include "../src/starfix_centroid.h"
 #include "../src/starfix_ekf.h"
 #include "../src/starfix_graph.h"
@@ -30,7 +31,7 @@
 #define MQ_NODES (MQ_STEPS - 1)
 #define MQ_SUBSTEPS 48
 
-static uint8_t mempool[16 * 1024 * 1024];
+static uint8_t mempool[128 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 static uint32_t visited_mask[CAM_WIDTH * CAM_HEIGHT];
 
@@ -241,26 +242,22 @@ static double position_error_meters(double lat1, double lon1, double lat2, doubl
     return position_error_nm(lat1, lon1, lat2, lon2) * 1852.0;
 }
 
-/* open output TSV in prototype/ directory whether invoked from root or prototype/ */
-static FILE* open_tsv_file(const char* filename, char* resolved_path, size_t path_size) {
-    if (access("prototype/Makefile", F_OK) == 0) {
-        snprintf(resolved_path, path_size, "prototype/%s", filename);
+/* open output file using custom prefix or default prototype/ path */
+static FILE* open_output_file(const char* output_prefix, const char* default_name, const char* ext,
+                              char* resolved_path, size_t path_size) {
+    if (output_prefix && output_prefix[0] != '\0') {
+        snprintf(resolved_path, path_size, "%s.%s", output_prefix, ext);
+    } else if (access("prototype/Makefile", F_OK) == 0) {
+        snprintf(resolved_path, path_size, "prototype/%s", default_name);
     } else {
-        snprintf(resolved_path, path_size, "%s", filename);
+        snprintf(resolved_path, path_size, "%s", default_name);
     }
     return fopen(resolved_path, "w");
 }
 
-/* compute GHA of aries (in degrees) from a unix UTC timestamp using IAU GMST */
+/* compute GAST in degrees from a unix UTC timestamp */
 static double gha_aries_from_utc(double utc_sec) {
-    double jd = utc_sec / 86400.0 + 2440587.5;
-    double d_j2000 = jd - 2451545.0;
-    double t = d_j2000 / 36525.0;
-    double gmst =
-        280.46061837 + 360.98564736629 * d_j2000 + 0.000387933 * t * t - (t * t * t) / 38710000.0;
-    gmst = fmod(gmst, 360.0);
-    if (gmst < 0.0) gmst += 360.0;
-    return gmst;
+    return starfix_gast_deg(utc_sec / 86400.0 + 40587.0);
 }
 
 /* classify ocean zone or route waypoint along the REQUIEM-SOPAC voyage */
@@ -319,12 +316,14 @@ static void apply_wave_swell_dynamics(prototype_sim_state_t* s, double t_sec, do
 #define SWELL_BURST_FRAMES 6
 
 /* capture a 6-frame burst across one full swell cycle to average out wave surge/sway */
-static int capture_swell_burst_fix(prototype_sim_state_t* base_sim, double base_t_sec,
+static int capture_swell_burst_fix(prototype_sim_state_t* base_sim, double base_utc_sec,
                                    double roll_amp_deg, double pitch_amp_deg,
                                    double swell_period_sec, double wave_accel_amp_g,
                                    double yaw_jitter_deg, uint32_t* frame_gen,
                                    starfix_photo_result_t* out_result, double* out_single_err_m,
                                    double* out_max_roll_deg, double* out_max_pitch_deg) {
+    if (base_sim->is_daytime || base_sim->cloud_cover >= 0.85) return 0;
+
     double sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
     double sum_rms = 0.0;
     uint32_t total_inliers = 0;
@@ -332,14 +331,11 @@ static int capture_swell_burst_fix(prototype_sim_state_t* base_sim, double base_
     int valid_frames = 0;
     double first_frame_err_m = NAN;
 
-    /* sample IMU apparent gravity across the full swell period */
-    double gx_list[SWELL_BURST_FRAMES], gy_list[SWELL_BURST_FRAMES], gz_list[SWELL_BURST_FRAMES];
-    double imu_err_x_sum = 0.0, imu_err_y_sum = 0.0;
     for (int f = 0; f < SWELL_BURST_FRAMES; f++) {
         double dt_burst = (double)f * (swell_period_sec / (double)SWELL_BURST_FRAMES);
         prototype_sim_state_t sim = *base_sim;
-        sim.gha_aries = fmod(base_sim->gha_aries + (dt_burst / 3600.0) * 15.04107, 360.0);
-        apply_wave_swell_dynamics(&sim, base_t_sec + dt_burst, roll_amp_deg, pitch_amp_deg,
+        sim.gha_aries = gha_aries_from_utc(base_utc_sec + dt_burst);
+        apply_wave_swell_dynamics(&sim, base_utc_sec + dt_burst, roll_amp_deg, pitch_amp_deg,
                                   swell_period_sec, wave_accel_amp_g, yaw_jitter_deg);
         prototype_sim_set_state(&sim);
 
@@ -350,20 +346,8 @@ static int capture_swell_burst_fix(prototype_sim_state_t* base_sim, double base_
         if (out_max_pitch_deg && fabs(pitch_deg) > *out_max_pitch_deg)
             *out_max_pitch_deg = fabs(pitch_deg);
 
-        bno055_read_gravity(&gx_list[f], &gy_list[f], &gz_list[f]);
-        imu_err_x_sum += (gx_list[f] - sim.tilt_x);
-        imu_err_y_sum += (gy_list[f] - sim.tilt_y);
-    }
-    double mean_err_x = imu_err_x_sum / (double)SWELL_BURST_FRAMES;
-    double mean_err_y = imu_err_y_sum / (double)SWELL_BURST_FRAMES;
-
-    for (int f = 0; f < SWELL_BURST_FRAMES; f++) {
-        double dt_burst = (double)f * (swell_period_sec / (double)SWELL_BURST_FRAMES);
-        prototype_sim_state_t sim = *base_sim;
-        sim.gha_aries = fmod(base_sim->gha_aries + (dt_burst / 3600.0) * 15.04107, 360.0);
-        apply_wave_swell_dynamics(&sim, base_t_sec + dt_burst, roll_amp_deg, pitch_amp_deg,
-                                  swell_period_sec, wave_accel_amp_g, yaw_jitter_deg);
-        prototype_sim_set_state(&sim);
+        double gx = 0.0, gy = 0.0, gz = 1.0;
+        if (bno055_read_gravity(&gx, &gy, &gz) < 0) continue;
 
         uint8_t* frame_buffer = NULL;
         if (camera_capture_frame(&frame_buffer, NULL) < 0) continue;
@@ -376,47 +360,29 @@ static int capture_swell_burst_fix(prototype_sim_state_t* base_sim, double base_
         if (num_centroids < 4) continue;
 
         starfix_match_t matches[MAX_MATCHES];
-        int num_matches =
-            starfix_identify_stars(num_centroids, centroids, CAM_WIDTH, CAM_HEIGHT, FOV_DEG, sim.db,
-                                   MAX_MATCHES, matches, arena, NULL);
+        int num_matches = starfix_identify_stars(num_centroids, centroids, CAM_WIDTH, CAM_HEIGHT,
+                                                 FOV_DEG, sim.db, MAX_MATCHES, matches, NULL);
         if (num_matches < 3) continue;
 
-        /* single-snapshot solve uses instantaneous un-averaged wave gravity vector */
-        if (isnan(first_frame_err_m)) {
-            starfix_photo_options_t single_opt = {
-                .width = CAM_WIDTH,
-                .height = CAM_HEIGHT,
-                .fov_deg = FOV_DEG,
-                .gha_aries = sim.gha_aries,
-                .zenith_camera = {gx_list[f], gy_list[f], gz_list[f]},
-            };
-            starfix_photo_result_t single_res;
-            if (starfix_solve_photo(num_centroids, centroids, sim.db->num_stars, sim.db->stars,
-                                    num_matches, matches, &single_opt, &single_res,
-                                    arena) == STARFIX_SUCCESS) {
-                first_frame_err_m = position_error_meters(single_res.latitude, single_res.longitude,
-                                                          sim.true_lat, sim.true_lon);
-            }
-        }
-
-        /* swell-filtered zenith uses IMU gravity averaged over the full wave period */
-        double fx = sim.tilt_x + mean_err_x;
-        double fy = sim.tilt_y + mean_err_y;
-        double fz = sqrt(fmax(0.0, 1.0 - fx * fx - fy * fy));
-        double fnorm = hypot(hypot(fx, fy), fz);
-
+        /* solve each frame with its instantaneous IMU zenith; R_f^T removes roll/pitch so
+         * earth-fixed averaging across one full swell cycle cancels orbital wave surge/sway */
         starfix_photo_options_t options = {
             .width = CAM_WIDTH,
             .height = CAM_HEIGHT,
             .fov_deg = FOV_DEG,
             .gha_aries = sim.gha_aries,
-            .zenith_camera = {fx / fnorm, fy / fnorm, fz / fnorm},
+            .zenith_camera = {gx, gy, gz},
         };
         starfix_photo_result_t frame_res;
         if (starfix_solve_photo(num_centroids, centroids, sim.db->num_stars, sim.db->stars,
                                 num_matches, matches, &options, &frame_res,
                                 arena) != STARFIX_SUCCESS)
             continue;
+
+        if (isnan(first_frame_err_m)) {
+            first_frame_err_m = position_error_meters(frame_res.latitude, frame_res.longitude,
+                                                      sim.true_lat, sim.true_lon);
+        }
 
         double lat_r = frame_res.latitude * M_PI / 180.0;
         double lon_r = frame_res.longitude * M_PI / 180.0;
@@ -442,7 +408,7 @@ static int capture_swell_burst_fix(prototype_sim_state_t* base_sim, double base_
     return valid_frames;
 }
 
-static int run_marquesas_passage_sim(const starfix_db_t* db) {
+static int run_marquesas_passage_sim(starfix_db_t* db, const char* output_prefix) {
     printf(
         "========================================================================================"
         "========================\n");
@@ -464,7 +430,6 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
     double start_lon = requiem_sopac_waypoints[0].lon;
     double true_speed_scale = 0.93;
     double dt_sub_sec = 300.0; /* 5-minute DR substeps; 48 substeps = 4.0 hours per ocean node */
-    double gha_aries_start = gha_aries_from_utc((double)base_utc);
 
     starfix_ekf_t ekf;
     starfix_ekf_init(&ekf, start_lat - 0.05, start_lon + 0.05);
@@ -505,6 +470,17 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
     double total_route_nm = 0.0;
 
     for (int step = 0; step < MQ_STEPS; step++) {
+        /* 4.0h per ocean step (0..360 = 60 days); variable harbor step durations (361..368) */
+        static const double harbor_elapsed_hr[8] = {1440.05, 1440.10, 1440.15, 1440.20,
+                                                    1440.30, 1440.60, 1440.72, 1440.85};
+        static const double harbor_dt_hr[8] = {0.05, 0.05, 0.05, 0.05, 0.10, 0.30, 0.12, 0.13};
+        double elapsed_hr = (step <= 360) ? (double)step * 4.0 : harbor_elapsed_hr[step - 361];
+        double step_dt_hr = (step <= 360) ? 4.0 : harbor_dt_hr[step - 361];
+        double step_dt_sub_sec = (step_dt_hr * 3600.0) / (double)MQ_SUBSTEPS;
+        double elapsed_sec = elapsed_hr * 3600.0;
+        double step_utc_sec = (double)base_utc + elapsed_sec;
+        step_time_hr[step] = elapsed_hr;
+
         double true_heading_deg = 197.0;
         double true_speed_knots = 5.4;
         double last_meas_speed = NAN;
@@ -527,7 +503,7 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
                 double dist_sub_nm = hypot(dn_nm, de_nm);
                 total_route_nm += dist_sub_nm;
                 true_heading_deg = fmod(atan2(de_nm, dn_nm) * 180.0 / M_PI + 360.0, 360.0);
-                true_speed_knots = dist_sub_nm / (dt_sub_sec / 3600.0);
+                true_speed_knots = dist_sub_nm / (step_dt_sub_sec / 3600.0);
 
                 prototype_sim_state_t sub_sim = {
                     .db = db,
@@ -544,16 +520,16 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
                 double rel_jitter = ((double)rand() / (double)RAND_MAX - 0.5) * 0.10;
                 double measured_speed = true_speed_knots * (true_speed_scale + rel_jitter);
 
-                double dr_dist_nm = measured_speed * (dt_sub_sec / 3600.0);
+                double dr_dist_nm = measured_speed * (step_dt_sub_sec / 3600.0);
                 double dr_h_rad = compass_heading * M_PI / 180.0;
                 dr_lat += (dr_dist_nm * cos(dr_h_rad)) / 60.0;
                 dr_lon += (dr_dist_nm * sin(dr_h_rad)) / (60.0 * cos(dr_lat * M_PI / 180.0));
 
                 int odom_idx = (step - 1) * MQ_SUBSTEPS + sub;
-                odom[odom_idx].speed = measured_speed;
+                odom[odom_idx].speed = measured_speed * (step_dt_sub_sec / dt_sub_sec);
                 odom[odom_idx].heading = compass_heading;
 
-                starfix_ekf_predict(&ekf, measured_speed, compass_heading, dt_sub_sec);
+                starfix_ekf_predict(&ekf, measured_speed, compass_heading, step_dt_sub_sec);
                 last_meas_speed = measured_speed;
                 last_compass_hdg = compass_heading;
             }
@@ -563,15 +539,6 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
         true_lons[step] = true_lon;
         dr_lats[step] = dr_lat;
         dr_lons[step] = dr_lon;
-
-        /* 4.0h per ocean step (0..360 = 60 days); variable harbor step durations (361..368) */
-        static const double harbor_elapsed_hr[8] = {1440.05, 1440.10, 1440.15, 1440.20,
-                                                    1440.30, 1440.60, 1440.72, 1440.85};
-        static const double harbor_dt_hr[8] = {0.05, 0.05, 0.05, 0.05, 0.10, 0.30, 0.12, 0.13};
-        double elapsed_hr = (step <= 360) ? (double)step * 4.0 : harbor_elapsed_hr[step - 361];
-        double step_dt_hr = (step <= 360) ? 4.0 : harbor_dt_hr[step - 361];
-        double elapsed_sec = elapsed_hr * 3600.0;
-        step_time_hr[step] = elapsed_hr;
 
         /* local solar time (departing bodega bay on apr 20, 2027 at 22:00 PST / 06:00 UTC) */
         double local_solar_hr = fmod(22.0 + elapsed_hr + (true_lon + 120.0) / 15.0, 24.0);
@@ -596,9 +563,15 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
             }
         }
 
+        if (!is_daytime && cloud_cover < 0.85) {
+            double step_mjd = step_utc_sec / 86400.0 + 40587.0;
+            double obs_year = 2000.0 + (step_mjd - 51544.5) / 365.25;
+            starfix_propagate_astrometry(db->stars, db->num_stars, obs_year);
+        }
+
         prototype_sim_state_t base_sim = {
             .db = db,
-            .gha_aries = fmod(gha_aries_start + elapsed_hr * 15.04107, 360.0),
+            .gha_aries = gha_aries_from_utc(step_utc_sec),
             .true_lat = true_lat,
             .true_lon = true_lon,
             .true_heading_deg = true_heading_deg,
@@ -615,9 +588,9 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
 
         starfix_photo_result_t result = {0};
         double single_err_m = 0.0;
-        int solved = capture_swell_burst_fix(&base_sim, elapsed_sec, roll_amp, pitch_amp, swell_per,
-                                             wave_acc, yaw_jit, &frame_gen, &result, &single_err_m,
-                                             &max_roll_deg, &max_pitch_deg) > 0;
+        int solved = capture_swell_burst_fix(&base_sim, step_utc_sec, roll_amp, pitch_amp,
+                                             swell_per, wave_acc, yaw_jit, &frame_gen, &result,
+                                             &single_err_m, &max_roll_deg, &max_pitch_deg) > 0;
 
         if (solved) {
             sum_single_err_nm += single_err_m / 1852.0;
@@ -658,8 +631,7 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
         step_bias_deg[step] = ekf.bias * 180.0 / M_PI;
         step_scale[step] = ekf.scale;
         if (!isnan(last_meas_speed) && !isnan(last_compass_hdg)) {
-            double time_scale = 4.0 / step_dt_hr;
-            step_speed_kt[step] = (last_meas_speed / ekf.scale) * time_scale;
+            step_speed_kt[step] = last_meas_speed / ekf.scale;
             step_course_deg[step] = fmod(last_compass_hdg - step_bias_deg[step] + 360.0, 360.0);
         } else {
             step_speed_kt[step] = NAN;
@@ -678,9 +650,11 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
         return 1;
     }
 
-    char tsv_path[256], nmea_path[256];
-    FILE* tsv = open_tsv_file("bodega_to_marquesas.tsv", tsv_path, sizeof(tsv_path));
-    FILE* nmea = open_tsv_file("bodega_to_marquesas.nmea", nmea_path, sizeof(nmea_path));
+    char tsv_path[512], nmea_path[512];
+    FILE* tsv = open_output_file(output_prefix, "bodega_to_marquesas.tsv", "tsv", tsv_path,
+                                 sizeof(tsv_path));
+    FILE* nmea = open_output_file(output_prefix, "bodega_to_marquesas.nmea", "nmea", nmea_path,
+                                  sizeof(nmea_path));
     if (!tsv || !nmea) {
         if (tsv) fclose(tsv);
         if (nmea) fclose(nmea);
@@ -791,16 +765,16 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
         num_fixes > 0 ? sum_burst_err_nm / (double)num_fixes : 0.0);
     printf(
         "Mean Position Error  : Uncalibrated DR = %5.1f nm | Online EKF = %4.2f nm | Batch "
-        "NanoQSP Graph = %4.2f nm\n",
+        "Factor Graph = %4.2f nm\n",
         sum_dr_err_nm / (double)MQ_STEPS, sum_ekf_err_nm / (double)MQ_STEPS,
         sum_qsp_err_nm / (double)MQ_STEPS);
     printf(
         "Final Arrival Error  : Uncalibrated DR = %5.1f nm | Online EKF = %4.2f nm (%.0f m) | "
-        "Batch NanoQSP = %4.2f nm (%.0f m)\n",
+        "Batch Graph = %4.2f nm (%.0f m)\n",
         final_dr_err_nm, final_ekf_err_nm, final_ekf_err_nm * 1852.0, final_qsp_err_nm,
         final_qsp_err_nm * 1852.0);
     printf(
-        "Sensor Calibration   : EKF Bias = %+.2f deg, Scale = %.3f | QSP Graph Bias = %+.2f "
+        "Sensor Calibration   : EKF Bias = %+.2f deg, Scale = %.3f | Graph Bias = %+.2f "
         "deg, Scale = %.3f (True: +4.00 deg, 0.930)\n",
         ekf.bias * 180.0 / M_PI, ekf.scale, graph_bias * 180.0 / M_PI, graph_scale);
     printf("Saved Marquesas TSV  : %s | NMEA 0183: %s\n", tsv_path, nmea_path);
@@ -813,7 +787,7 @@ static int run_marquesas_passage_sim(const starfix_db_t* db) {
     return (num_fixes >= 20 && final_ekf_err_nm < 5.0 && final_qsp_err_nm < 5.0) ? 0 : 1;
 }
 
-int main(void) {
+int main(int argc, char** argv) {
     if (camera_init("/dev/video0", CAM_WIDTH, CAM_HEIGHT) < 0) {
         fprintf(stderr, "Failed to initialize mock camera.\n");
         return 1;
@@ -835,10 +809,11 @@ int main(void) {
             return 1;
         }
     }
-    /* propagate catalog proper motions to apr 20, 2027 (J2027.299) */
-    starfix_propagate_astrometry(db.stars, db.num_stars, 2027.2991);
+    /* propagate catalog astrometry to departure epoch (apr 20, 2027) */
+    starfix_propagate_astrometry(db.stars, db.num_stars, 2027.2984);
 
-    int status_mq = run_marquesas_passage_sim(&db);
+    const char* output_prefix = (argc > 1) ? argv[1] : NULL;
+    int status_mq = run_marquesas_passage_sim(&db, output_prefix);
 
     starfix_free_db(&db);
     bno055_close();

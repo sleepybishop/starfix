@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "../src/starfix_arena.h"
+#include "../src/starfix_astrometry.h"
 #include "../src/starfix_attitude.h"
 #include "../src/starfix_centroid.h"
 #include "../src/starfix_ekf.h"
@@ -27,20 +28,13 @@
 #define MAX_MATCHES 20
 
 /* pre-allocated memory for starfix algorithms */
-static uint8_t mempool[10 * 1024 * 1024];
+static uint8_t mempool[128 * 1024];
 static starfix_arena_t arena = {mempool, mempool + sizeof(mempool)};
 static uint32_t visited_mask[CAM_WIDTH * CAM_HEIGHT];
 
-/* compute greenwich hour angle of aries in degrees from unix UTC timestamp */
+/* compute greenwich apparent sidereal time in degrees from unix UTC timestamp */
 static double current_gha_aries_utc(double t_now) {
-    double jd = t_now / 86400.0 + 2440587.5;
-    double d_ut1 = jd - 2451545.0;
-    double t = d_ut1 / 36525.0;
-    double gmst =
-        280.46061837 + 360.98564736629 * d_ut1 + 0.000387933 * t * t - (t * t * t) / 38710000.0;
-    gmst = fmod(gmst, 360.0);
-    if (gmst < 0.0) gmst += 360.0;
-    return gmst;
+    return starfix_gast_deg(t_now / 86400.0 + 40587.0);
 }
 
 int main(void) {
@@ -125,7 +119,7 @@ int main(void) {
         /* 3. identify stars */
         starfix_match_t matches[MAX_MATCHES];
         int num_matches = starfix_identify_stars(num_centroids, centroids, CAM_WIDTH, CAM_HEIGHT,
-                                                 FOV_DEG, &db, MAX_MATCHES, matches, arena, NULL);
+                                                 FOV_DEG, &db, MAX_MATCHES, matches, NULL);
 
         if (num_matches < 3) {
             printf("Frame %d: Star ID failed (%d)\n", frame_count, num_matches);
@@ -158,10 +152,10 @@ int main(void) {
                 "(Inliers: %u)\n",
                 frame_count, result.latitude, result.longitude, ekf.lat, ekf.lon, result.inliers);
             char nmea_buf[256];
-            double heading_deg = NAN;
-            if (bno055_read_heading(&heading_deg) < 0) heading_deg = NAN;
+            double nmea_hdg = NAN;
+            if (bno055_read_heading(&nmea_hdg) < 0) nmea_hdg = NAN;
             if (starfix_format_nmea_fix(ekf.lat, ekf.lon, (time_t)captured_utc, 1,
-                                        (int)result.inliers, NAN, heading_deg, nmea_buf,
+                                        (int)result.inliers, NAN, nmea_hdg, nmea_buf,
                                         sizeof(nmea_buf)) == STARFIX_SUCCESS) {
                 fputs(nmea_buf, stdout);
             }

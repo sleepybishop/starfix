@@ -12,6 +12,15 @@
 
 double starfix_year_to_mjd(double year) { return J2000 + (year - 2000.0) * 365.25; }
 
+double starfix_utc_to_mjd(int year, int month, int day, int hour, int minute, double second) {
+    int a = (14 - month) / 12;
+    int y = year + 4800 - a;
+    int m = month + 12 * a - 3;
+    long jdn = (long)day + (153L * m + 2L) / 5L + 365L * y + y / 4L - y / 100L + y / 400L - 32045L;
+    double mjd_day = (double)(jdn - 2400001L);
+    return mjd_day + ((double)hour + (double)minute / 60.0 + second / 3600.0) / 24.0;
+}
+
 static void precession_matrix(double equinox, double P[3][3]) {
     if (fabs(equinox - J2000) < 1.0) {
         P[0][0] = P[1][1] = P[2][2] = 1.0;
@@ -223,6 +232,20 @@ void starfix_astrometry_frame(double mj, double P[3][3], double aberration[3]) {
     aberration[2] = 0.395e-4 * cL;
 }
 
+double starfix_gast_deg(double mjd_utc) {
+    double d_ut1 = mjd_utc - J2000;
+    double t = d_ut1 / 36525.0;
+    double gmst =
+        280.46061837 + 360.98564736629 * d_ut1 + 0.000387933 * t * t - (t * t * t) / 38710000.0;
+    double eps = 0.0, dpsi = 0.0, deps = 0.0;
+    obliquity(mjd_utc, &eps);
+    nutation(mjd_utc, &deps, &dpsi);
+    double eq_equinox_deg = raddeg(dpsi * cos(eps + deps));
+    double gast = fmod(gmst + eq_equinox_deg, 360.0);
+    if (gast < 0.0) gast += 360.0;
+    return gast;
+}
+
 static void unrefractLT15(double pr, double tr, double aa, double* ta);
 static void unrefractGE15(double pr, double tr, double aa, double* ta);
 
@@ -263,4 +286,18 @@ static void unrefractLT15(double pr, double tr, double aa, double* ta) {
     r = degrad(a / b);
 
     *ta = (aa < 0 && r < 0) ? aa : aa - r; /* 0 below ~5 degs */
+}
+
+void starfix_refract(double pr, double tr, double ta, double* aa) {
+    if (ta <= 0.0) {
+        *aa = ta;
+        return;
+    }
+    double est_aa = ta;
+    for (int iter = 0; iter < 3; iter++) {
+        double est_ta = est_aa;
+        starfix_unrefract(pr, tr, est_aa, &est_ta);
+        est_aa += (ta - est_ta);
+    }
+    *aa = est_aa;
 }

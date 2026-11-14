@@ -50,19 +50,7 @@ sub get_camera_zenith {
     if (defined $zenith_camera) {
         die "zenith_camera must contain three components\n";
     }
-    my $roll = defined $tilts->{roll_deg} ? $tilts->{roll_deg} : 0.0;
-    my $pitch = defined $tilts->{pitch_deg} ? $tilts->{pitch_deg} : 0.0;
-    if (!photo_common::is_finite_number($roll) || !photo_common::is_finite_number($pitch)) {
-        die "non-finite legacy tilt component\n";
-    }
-    my $g_x = sin($roll * $PI / 180.0);
-    my $g_y = sin($pitch * $PI / 180.0);
-    my $g_z_sq = 1.0 - $g_x * $g_x - $g_y * $g_y;
-    if ($g_z_sq < -1e-9) {
-        die "legacy EXIF tilt components do not form a unit vector\n";
-    }
-    my $g_z = sqrt($g_z_sq > 0.0 ? $g_z_sq : 0.0);
-    return [ $g_x, $g_y, $g_z ];
+    return [ 0.0, 0.0, 1.0 ];
 }
 
 sub refract_camera_ray {
@@ -106,14 +94,11 @@ sub solve_photo_overlay {
     $image_path = abs_path($image_path) // die "cannot resolve $image_path\n";
     my $exif_dict = photo_common::load_exif($image_path);
     my $utc_dt = photo_common::parse_exif_utc($exif_dict);
-    my (undef, $gha_aries) = photo_common::calculate_gha_aries($utc_dt);
     my $metadata = photo_common::get_user_comment($exif_dict->{'Exif'}) || {};
 
     if (defined $zenith_camera) {
         $metadata = { zenith_camera => [ @$zenith_camera ] };
-    } elsif (!exists $metadata->{zenith_camera}
-          && !exists $metadata->{roll_deg}
-          && !exists $metadata->{pitch_deg}) {
+    } elsif (!exists $metadata->{zenith_camera}) {
         print "  No tilt measurement: assuming the image center points exactly at zenith\n";
     }
     my $zenith = get_camera_zenith($metadata);
@@ -132,33 +117,15 @@ sub solve_photo_overlay {
     my $plate = photo_common::solve_plate(
         $image_path, $exif_dict, $cli_bin, $work_dir, $utc_dt, $zenith
     );
-    my $result = photo_common::run_command([
-        $cli_bin, '--solve-photo',
-        sprintf('%.9f', $gha_aries),
-        sprintf('%.12f', $zenith->[0]),
-        sprintf('%.12f', $zenith->[1]),
-        sprintf('%.12f', $zenith->[2]),
-        sprintf('%.9f', $plate->{fov_deg}),
-        sprintf('%.9f', photo_common::decimal_year($utc_dt)),
-        "$plate->{crop_size}",
-    ], $work_dir);
-
-    my $solution = photo_common::parse_solver_output($result);
-    if (!photo_common::solution_is_acceptable($solution)) {
-        die "photo position failed quality checks:\n$result->{stdout}$result->{stderr}";
-    }
-    my %position;
-    for my $line (split(/\r?\n/, $result->{stdout})) {
-        if ($line =~ /Solved Latitude\s*:\s*([+-]?\d+(?:\.\d+)?)/) {
-            $position{latitude} = $1 + 0.0;
-        } elsif ($line =~ /Solved Longitude\s*:\s*([+-]?\d+(?:\.\d+)?)/) {
-            $position{longitude} = $1 + 0.0;
-        }
-    }
-    if (scalar(keys %position) != 2) {
+    my $solution = $plate->{solution};
+    if (!defined $solution->{latitude} || !defined $solution->{longitude}) {
         die "solver did not return a complete position\n";
     }
-    print $result->{stdout};
+    my %position = (
+        latitude  => $solution->{latitude},
+        longitude => $solution->{longitude},
+    );
+    print $solution->{stdout};
 
     my $width = $plate->{width};
     my $height = $plate->{height};

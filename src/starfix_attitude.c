@@ -285,10 +285,21 @@ starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
                                             const starfix_vector3_t* z_cam, double temp_c,
                                             double press_hpa) {
     if (!w || !z_cam) return STARFIX_ERR_NULL_POINTER;
-    if (num_stars <= 0) return STARFIX_ERR_INVALID_PARAM;
-
+    if (num_stars <= 0 || !isfinite(temp_c) || temp_c <= -273.0 || !isfinite(press_hpa) ||
+        press_hpa < 0.0)
+        return STARFIX_ERR_INVALID_PARAM;
+    if (!isfinite(z_cam->x) || !isfinite(z_cam->y) || !isfinite(z_cam->z))
+        return STARFIX_ERR_DATA_CORRUPTION;
+    double z_norm = hypot(hypot(z_cam->x, z_cam->y), z_cam->z);
+    if (!isfinite(z_norm) || z_norm < 1e-12) return STARFIX_ERR_INVALID_PARAM;
     for (int i = 0; i < num_stars; i++) {
-        double cos_theta = starfix_dot(w[i], *z_cam);
+        if (!isfinite(w[i].x) || !isfinite(w[i].y) || !isfinite(w[i].z))
+            return STARFIX_ERR_DATA_CORRUPTION;
+    }
+
+    starfix_vector3_t z_unit = {z_cam->x / z_norm, z_cam->y / z_norm, z_cam->z / z_norm};
+    for (int i = 0; i < num_stars; i++) {
+        double cos_theta = starfix_dot(w[i], z_unit);
 
         if (cos_theta > 1.0) cos_theta = 1.0;
         if (cos_theta < -1.0) cos_theta = -1.0;
@@ -302,10 +313,10 @@ starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
             starfix_unrefract(press_hpa, temp_c, alt_a, &alt_t);
             double theta_t = M_PI / 2.0 - alt_t;
 
-            /* Orthogonal component to z_cam in the plane of w */
-            double ux = w[i].x - cos_theta * z_cam->x;
-            double uy = w[i].y - cos_theta * z_cam->y;
-            double uz = w[i].z - cos_theta * z_cam->z;
+            /* orthogonal component to z_unit in the plane of w */
+            double ux = w[i].x - cos_theta * z_unit.x;
+            double uy = w[i].y - cos_theta * z_unit.y;
+            double uz = w[i].z - cos_theta * z_unit.z;
 
             double u_norm = sqrt(ux * ux + uy * uy + uz * uz);
             if (u_norm > 1e-12) {
@@ -313,10 +324,10 @@ starfix_status_t starfix_correct_refraction(int num_stars, starfix_vector3_t* w,
                 uy /= u_norm;
                 uz /= u_norm;
 
-                /* Reconstruct true vector shifted away from Zenith */
-                w[i].x = cos(theta_t) * z_cam->x + sin(theta_t) * ux;
-                w[i].y = cos(theta_t) * z_cam->y + sin(theta_t) * uy;
-                w[i].z = cos(theta_t) * z_cam->z + sin(theta_t) * uz;
+                /* reconstruct true vector shifted away from zenith */
+                w[i].x = cos(theta_t) * z_unit.x + sin(theta_t) * ux;
+                w[i].y = cos(theta_t) * z_unit.y + sin(theta_t) * uy;
+                w[i].z = cos(theta_t) * z_unit.z + sin(theta_t) * uz;
 
                 double w_norm = sqrt(w[i].x * w[i].x + w[i].y * w[i].y + w[i].z * w[i].z);
                 if (w_norm > 1e-12) {

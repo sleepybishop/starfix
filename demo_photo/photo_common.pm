@@ -123,8 +123,19 @@ sub calculate_gha_aries {
         + 360.98564736629 * ($jd - 2451545.0)
         + 0.000387933 * $t * $t
         - ($t * $t * $t) / 38710000.0;
-    $gmst = $gmst - 360.0 * floor($gmst / 360.0);
-    return ($jd, $gmst);
+
+    # equation of the equinoxes (GAST - GMST) matching true-of-date catalog frame
+    my $eps = (23.4392911 + $t * (-46.8150 / 3600.0)) * $PI / 180.0;
+    my $omega = (125.04452 - 1934.136261 * $t) * $PI / 180.0;
+    my $lsun = (280.4665 + 36000.7698 * $t) * $PI / 180.0;
+    my $lmoon = (218.3165 + 481267.8813 * $t) * $PI / 180.0;
+    my $dpsi_deg = (-17.20 * sin($omega) - 1.32 * sin(2.0 * $lsun)
+                    - 0.23 * sin(2.0 * $lmoon) + 0.21 * sin(2.0 * $omega)) / 3600.0;
+    my $deps = (9.20 * cos($omega) + 0.57 * cos(2.0 * $lsun)
+                + 0.10 * cos(2.0 * $lmoon) - 0.09 * cos(2.0 * $omega)) * $PI / (180.0 * 3600.0);
+    my $gast = $gmst + $dpsi_deg * cos($eps + $deps);
+    $gast = $gast - 360.0 * floor($gast / 360.0);
+    return ($jd, $gast);
 }
 
 sub decimal_year {
@@ -265,6 +276,32 @@ sub pack_ifd_section {
     return pack('v', $count) . $entries_bytes . pack('V', 0) . $extra_bytes;
 }
 
+sub strip_jpeg_exif_segments {
+    my ($data) = @_;
+    my $pos = 2;
+    while ($pos + 4 <= length($data)) {
+        last if substr($data, $pos, 1) ne "\xFF";
+        my $marker_start = $pos;
+        $pos++ while $pos < length($data) && substr($data, $pos, 1) eq "\xFF";
+        last if $pos >= length($data);
+        my $marker = ord(substr($data, $pos++, 1));
+        last if $marker == 0xDA || $marker == 0xD9;
+        if ($marker == 0x01 || ($marker >= 0xD0 && $marker <= 0xD7)) {
+            next;
+        }
+        last if $pos + 2 > length($data);
+        my $seg_len = unpack('n', substr($data, $pos, 2));
+        last if $seg_len < 2 || $pos + $seg_len > length($data);
+        if ($marker == 0xE1 && $seg_len >= 8 && substr($data, $pos + 2, 6) eq "Exif\x00\x00") {
+            substr($data, $marker_start, ($pos + $seg_len) - $marker_start, '');
+            $pos = $marker_start;
+        } else {
+            $pos += $seg_len;
+        }
+    }
+    return $data;
+}
+
 sub write_jpeg_exif {
     my ($image_path, $exif_dict) = @_;
     open(my $fh, '<:raw', $image_path) or die "cannot open $image_path: $!\n";
@@ -272,6 +309,7 @@ sub write_jpeg_exif {
     my $data = <$fh>;
     close($fh);
     die "not a JPEG file: $image_path\n" unless substr($data, 0, 2) eq "\xFF\xD8";
+    $data = strip_jpeg_exif_segments($data);
 
     my %ifd0 = %{ $exif_dict->{'0th'} || {} };
     my %exif = %{ $exif_dict->{'Exif'} || {} };
@@ -478,11 +516,14 @@ sub run_command {
 sub parse_solver_output {
     my ($result) = @_;
     my %parsed = (
-        rms      => 9**9**9,
-        rotation => undef,
-        inliers  => 0,
-        matches  => 0,
-        fov_deg  => undef,
+        rms       => 9**9**9,
+        rotation  => undef,
+        inliers   => 0,
+        matches   => 0,
+        fov_deg   => undef,
+        latitude  => undef,
+        longitude => undef,
+        stdout    => defined($result) ? ($result->{stdout} // '') : '',
     );
     return \%parsed if !defined $result || ($result->{returncode} // 1) != 0;
 
@@ -504,6 +545,10 @@ sub parse_solver_output {
                     [ $v[6], $v[7], $v[8] ],
                 ];
             }
+        } elsif ($line =~ /Solved Latitude\s*:\s*([+-]?\d+(?:\.\d+)?)/) {
+            $parsed{latitude} = $1 + 0.0;
+        } elsif ($line =~ /Solved Longitude\s*:\s*([+-]?\d+(?:\.\d+)?)/) {
+            $parsed{longitude} = $1 + 0.0;
         }
     }
     return \%parsed;
@@ -529,6 +574,7 @@ sub solve_plate {
         die "image is smaller than the required ${CROP_SIZE}x${CROP_SIZE} crop\n";
     }
     my $year = decimal_year($utc_dt);
+    my (undef, $gha_aries) = calculate_gha_aries($utc_dt);
     my $data_dir = File::Spec->catdir($work_dir, 'data');
     my $matches_path = File::Spec->catfile($data_dir, 'identified_stars.json');
     my $centroids_path = File::Spec->catfile($data_dir, 'detected_centroids.json');
@@ -572,6 +618,7 @@ sub solve_plate {
 
             my $sweep_res = run_command([
                 $cli_bin, '--sweep-photo',
+                sprintf('%.9f', $gha_aries),
                 sprintf('%.12f', $zenith_camera->[0]),
                 sprintf('%.12f', $zenith_camera->[1]),
                 sprintf('%.12f', $zenith_camera->[2]),

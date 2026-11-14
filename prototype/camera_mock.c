@@ -87,13 +87,8 @@ static starfix_vector3_t refract_camera_ray(starfix_vector3_t cam, starfix_vecto
     double alt_t = M_PI / 2.0 - theta_t;
     if (theta_t <= 1e-6 || alt_t <= 0.0) return cam;
 
-    /* invert starfix_unrefract via 2-step fixed-point iteration */
     double alt_a = alt_t;
-    for (int iter = 0; iter < 2; iter++) {
-        double est_t = alt_a;
-        starfix_unrefract(1010.0, 10.0, alt_a, &est_t);
-        alt_a += (alt_t - est_t);
-    }
+    starfix_refract(1010.0, 10.0, alt_t, &alt_a);
     double theta_a = M_PI / 2.0 - alt_a;
 
     double ux = cam.x - cos_theta * g_cam.x;
@@ -168,8 +163,7 @@ int camera_capture_frame(uint8_t** buffer, double* captured_utc) {
 
     for (uint32_t i = 0; i < s->db->num_stars; i++) {
         const starfix_catalog_star_t* star = &s->db->stars[i];
-        starfix_vector3_t v = starfix_celestial_ray(star->ra, star->dec);
-        starfix_vector3_t cam = starfix_rotate((const double (*)[3])R, v);
+        starfix_vector3_t cam = starfix_rotate((const double (*)[3])R, star->unit);
         if (cam.z < field_cos) continue;
 
         /* patchy cloud cover obscures individual stars */
